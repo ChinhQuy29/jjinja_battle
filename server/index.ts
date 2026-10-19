@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
 import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
 import { blocked, cleanName, isBanned, report } from "./safety.js";
+import { allowAction, closeConnection, MessageBudget, openConnection } from "./limits.js";
 import { hintFor, pickAxis, playRally, type Axis, type RallyResult } from "./rally.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -389,16 +390,23 @@ function clientIp(req: import("node:http").IncomingMessage) {
 }
 
 wss.on("connection", (ws, req) => {
-  const p: Player = { id: randomUUID(), name: "Guest", ip: clientIp(req), adult: false, cam: false, ws, room: null, queued: false };
+  const ip = clientIp(req);
+  if (!openConnection(ip)) return ws.close(1013, "Too many connections");
+  const budget = new MessageBudget();
+  const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, ws, room: null, queued: false };
   send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo) });
 
   ws.on("message", (data) => {
+    const verdict = budget.take();
+    if (verdict === "kick") return ws.close(1008, "Too many messages");
+    if (verdict === "drop") return;
     let msg: any;
     try {
       msg = JSON.parse(String(data));
     } catch {
       return;
     }
+    if (!allowAction(p.ip, msg?.t)) return send(p, { t: "slow", action: msg.t, msg: "Slow down a little! Try again in a minute." });
     switch (msg.t) {
       case "hello":
         p.name = cleanName(msg.name);
@@ -500,6 +508,7 @@ wss.on("connection", (ws, req) => {
   });
 
   ws.on("close", () => {
+    closeConnection(ip);
     dequeue(p);
     leaveRoom(p);
   });

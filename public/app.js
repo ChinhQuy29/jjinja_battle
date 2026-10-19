@@ -23,8 +23,9 @@ function connect() {
     send({ t: "hello", name: myName(), adult: ageChoice() === "adult" });
     while (pending.length) ws.send(JSON.stringify(pending.shift()));
   };
-  ws.onclose = () => {
-    $("conn").textContent = "Disconnected. Reconnecting…";
+  ws.onclose = (e) => {
+    $("conn").textContent =
+      e.code === 1013 ? "Too many open tabs from your network. Close some and we'll reconnect…" : "Disconnected. Reconnecting…";
     state = null;
     closePeer();
     show("home");
@@ -654,6 +655,12 @@ function onMessage(m) {
       history.replaceState(null, "", `/r/${m.code}`);
       syncPeer();
       renderRoom();
+      break;
+    case "slow":
+      $("conn").textContent = m.msg;
+      setTimeout(() => ($("conn").textContent = ""), 5000);
+      if (m.action === "practice") armPracticeButton();
+      if (m.action === "quick") show("home");
       break;
     case "reported":
       state = null;
