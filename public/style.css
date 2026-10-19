@@ -308,3 +308,5 @@ dialog a, .legal a { color: var(--accent-2); }
 .doc h2 { margin-top: 1.4em; font-size: 1.2rem; }
 .doc a { color: var(--accent-2); }
 .doc li { margin: 4px 0; }
+
+#btnBot.pulse { animation: pulse 0.8s ease-in-out infinite alternate; }

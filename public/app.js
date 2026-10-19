@@ -1,6 +1,6 @@
 import { analyze } from "./features.js";
 import { startFaceCapture } from "./face.js";
-import { announce, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
+import { announce, botSpeak, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
 
 const MAX_RECORD_MS = 3000;
 const LONGER_RALLY_MAX_MS = 8000; // a 3s cap would make "longer" rallies unbeatable after one turn
@@ -112,7 +112,7 @@ let signalChain = Promise.resolve();
 
 function syncPeer() {
   const opponent = state?.players.find((p) => p.id !== myId);
-  if (!opponent) return closePeer();
+  if (!opponent || opponent.bot) return closePeer(); // no video call with the bot
   if (opponent.id === peerId) return;
   closePeer();
   peerId = opponent.id;
@@ -451,7 +451,8 @@ function renderTiles() {
     tile.classList.toggle("active", !!p && s.phase === "turn" && s.turnOf === p.id);
     const hiddenTag = s.kind === "random" && p && !videoAllowed() ? " · 🔒 cam off" : "";
     tile.querySelector(".pname").textContent = p ? `${p.name}${p.id === myId ? " (you)" : ""}${hiddenTag}` : "";
-    tile.querySelector(".reportBtn").hidden = !p || p.id === myId;
+    tile.querySelector(".reportBtn").hidden = !p || p.id === myId || p.bot;
+    tile.querySelector(".noCam").textContent = p?.bot ? "🤖" : "🙂";
     tile.querySelector(".wins").textContent = p ? "★".repeat(p.wins) + "☆".repeat(Math.max(0, 2 - p.wins)) : "";
 
     if (!p) attach(tile, null, { mine: false });
@@ -577,6 +578,8 @@ function renderFaces(s) {
   $("overFaces").innerHTML = cards ? `<h3>Funniest faces</h3><div class="faces">${cards}</div>` : "";
 }
 
+let queueTimer = null;
+
 let timerDeadline = 0;
 
 function startTimer(deadlineLocal) {
@@ -606,6 +609,7 @@ function announceTransition(prev, next) {
   if (next.phase === "turn") {
     const newTurn = prev?.phase !== "turn" || prev.turnOf !== next.turnOf || prev.round !== next.round;
     if (!newTurn) return;
+    if (next.players.find((p) => p.id === next.turnOf)?.bot) setTimeout(botSpeak, 1500);
     const who = next.turnOf === myId ? "Your turn!" : `${name(next.turnOf)}'s turn.`;
     const newRound = !prev || prev.round !== next.round || prev.phase === "lobby" || prev.phase === "over";
     if (next.mode === "rally") {
@@ -644,6 +648,12 @@ function onMessage(m) {
       break;
     case "queued":
       show("queue");
+      $("queueText").textContent = "Looking for an opponent…";
+      clearTimeout(queueTimer);
+      queueTimer = setTimeout(() => {
+        $("queueText").textContent = "No one's around right now. Jjinja Bot is always up for a fight!";
+        $("btnBot").classList.add("pulse");
+      }, 12000);
       break;
     case "unqueued":
       show("home");
@@ -771,7 +781,15 @@ $("btnReportSend").onclick = () => {
   if (state) renderTiles();
   send({ t: "report", reason: $("reportReason").value });
 };
-$("btnCancelQuick").onclick = () => send({ t: "cancelQuick" });
+$("btnCancelQuick").onclick = () => {
+  clearTimeout(queueTimer);
+  send({ t: "cancelQuick" });
+};
+$("btnBot").onclick = () => {
+  clearTimeout(queueTimer);
+  $("btnBot").classList.remove("pulse");
+  send({ t: "bot" });
+};
 $("btnJoin").onclick = () => {
   requireName();
   send({ t: "join", code: $("joinCode").value.trim().toUpperCase() });

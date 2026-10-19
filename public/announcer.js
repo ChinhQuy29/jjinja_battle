@@ -51,6 +51,19 @@ export function hush() {
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// The bot's own "jjinja": a Korean voice says 진짜 properly when the device has one.
+export function botSpeak() {
+  if (!synth || muted) return;
+  synth.cancel();
+  const korean = (synth.getVoices() ?? []).find((v) => v.lang?.toLowerCase().startsWith("ko"));
+  const u = new SpeechSynthesisUtterance(korean ? pick(["진짜?", "진짜아아?", "찐짜?!"]) : pick(["jjinja?", "jjinjaaa?", "jjin-JAAA?!"]));
+  if (korean) u.voice = korean;
+  else if (voice) u.voice = voice;
+  u.pitch = 0.9 + Math.random() * 1.1;
+  u.rate = 0.7 + Math.random() * 0.5;
+  synth.speak(u);
+}
+
 export function scoreLine(score) {
   if (score.total === 0 && /time/i.test(score.comment)) return pick(["Too slow!", "Time's up!"]);
   if (score.total >= 90) return pick(["LEGENDARY!", "Flawless jjinja!", "Unbelievable!"]);

@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
 import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
 import { blocked, cleanName, isBanned, report } from "./safety.js";
+import { BOT_NAME, botDelayMs, botFeatures, botRallyFeatures } from "./bot.js";
 import { allowAction, closeConnection, MessageBudget, openConnection } from "./limits.js";
 import { hintFor, pickAxis, playRally, type Axis, type RallyResult } from "./rally.js";
 
@@ -54,7 +55,8 @@ interface Player {
   ip: string;
   adult: boolean; // confirmed 18+, required to turn the camera on in random matches
   cam: boolean; // consented to show their camera in a random match
-  ws: WebSocket;
+  ws: WebSocket | null; // null for the bot
+  bot: boolean;
   room: Room | null;
   queued: boolean;
 }
@@ -82,7 +84,7 @@ interface Room {
   players: Player[];
   ready: Set<string>;
   phase: Phase;
-  kind: "private" | "random"; // random rooms keep cameras off until both players opt in
+  kind: "private" | "random" | "bot"; // random rooms keep cameras off until both players opt in
   mode: Mode;
   rally: Rally | null;
   round: number;
@@ -105,7 +107,7 @@ const rooms = new Map<string, Room>();
 const queue: Player[] = [];
 
 function send(p: Player, msg: object) {
-  if (p.ws.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify(msg));
+  if (p.ws?.readyState === WebSocket.OPEN) p.ws.send(JSON.stringify(msg));
 }
 
 function broadcast(room: Room, msg: object) {
@@ -155,7 +157,7 @@ function pushState(room: Room) {
     phase: room.phase,
     kind: room.kind,
     mode: room.mode,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0, cam: p.cam })),
+    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0, cam: p.cam, bot: p.bot })),
     round: room.round,
     challenge: room.phase === "turn" || room.phase === "reveal" ? roundInfo(room) : null,
     turnOf: room.turnOf,
@@ -196,7 +198,7 @@ function leaveRoom(p: Player) {
   p.room = null;
   room.players = room.players.filter((x) => x !== p);
   room.ready.delete(p.id);
-  if (room.players.length === 0) {
+  if (room.players.every((x) => x.bot)) {
     clearTimer(room);
     rooms.delete(room.code);
     return;
@@ -255,6 +257,8 @@ function startTurn(room: Room) {
   const turnMs = room.mode === "rally" ? RALLY_TURN_MS + (room.rally?.axis.id === "longer" ? 6000 : 0) : TURN_MS;
   room.deadline = Date.now() + turnMs;
   room.timer = setTimeout(() => submit(room, room.turnOf!, null), turnMs + 1500);
+  const current = room.players.find((x) => x.id === room.turnOf);
+  if (current?.bot) setTimeout(() => botTurn(room, current), botDelayMs());
   pushState(room);
 }
 
@@ -275,6 +279,23 @@ function submit(room: Room, playerId: string, payload: { features: unknown; audi
   // give the opponent time to hear the clip and see the score
   const revealMs = Math.min(features?.duration ?? 0, 3.5) * 1000 + 3500;
   room.timer = setTimeout(() => afterReveal(room), revealMs);
+}
+
+function botTurn(room: Room, bot: Player) {
+  if (room.phase !== "turn" || room.turnOf !== bot.id || !rooms.has(room.code)) return;
+  const features =
+    room.mode === "rally" && room.rally
+      ? botRallyFeatures(room.rally.axis, room.rally.target, room.rally.exchanges)
+      : botFeatures();
+  submit(room, bot.id, { features });
+}
+
+function startBotMatch(p: Player) {
+  const room = createRoom("bot");
+  joinRoom(p, room);
+  const bot: Player = { id: randomUUID(), name: BOT_NAME, ip: "bot", adult: false, cam: false, ws: null, bot: true, room, queued: false };
+  room.players.push(bot);
+  startMatch(room);
 }
 
 function keepFace(room: Room, playerId: string, face: string | undefined, funny: number) {
@@ -393,7 +414,7 @@ wss.on("connection", (ws, req) => {
   const ip = clientIp(req);
   if (!openConnection(ip)) return ws.close(1013, "Too many connections");
   const budget = new MessageBudget();
-  const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, ws, room: null, queued: false };
+  const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, ws, bot: false, room: null, queued: false };
   send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo) });
 
   ws.on("message", (data) => {
@@ -442,6 +463,11 @@ wss.on("connection", (ws, req) => {
           tryMatchmake();
         }
         break;
+      case "bot":
+        dequeue(p);
+        leaveRoom(p);
+        startBotMatch(p);
+        break;
       case "cancelQuick":
         dequeue(p);
         send(p, { t: "unqueued" });
@@ -462,6 +488,7 @@ wss.on("connection", (ws, req) => {
         if (!room || (room.phase !== "lobby" && room.phase !== "over")) return;
         if (room.ready.has(p.id)) room.ready.delete(p.id);
         else room.ready.add(p.id);
+        for (const x of room.players) if (x.bot) room.ready.add(x.id); // the bot is always ready
         if (room.players.length === 2 && room.ready.size === 2) startMatch(room);
         else pushState(room);
         break;

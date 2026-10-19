@@ -15,6 +15,7 @@ const ACTION_LIMITS: Record<string, { max: number; windowMs: number }> = {
   create: { max: 15, windowMs: 60_000 },
   join: { max: 30, windowMs: 60_000 }, // also slows down guessing room codes
   quick: { max: 30, windowMs: 60_000 },
+  bot: { max: 30, windowMs: 60_000 },
   practice: { max: 30, windowMs: 60_000 },
   report: { max: 10, windowMs: 60 * 60_000 },
 };
