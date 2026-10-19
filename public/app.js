@@ -1,4 +1,5 @@
 import { analyze } from "./features.js";
+import { announce, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
 
 const MAX_RECORD_MS = 3000;
 const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
@@ -210,6 +211,7 @@ async function record(button, meterEl) {
     // a timer, not rAF, enforces the cap: rAF pauses in background tabs
     const cap = setTimeout(stop, MAX_RECORD_MS);
 
+    hush(); // keep the announcer out of the recording
     rec.start();
     button.classList.add("live");
     button.innerHTML = "⏹<small>tap to stop</small>";
@@ -473,6 +475,29 @@ function stopTimer() {
   $("timerBar").style.width = "0%";
 }
 
+// ---------- announcer ----------
+
+function announceTransition(prev, next) {
+  const name = (id) => next.players.find((p) => p.id === id)?.name ?? "?";
+  if (next.phase === "turn") {
+    const newTurn = prev?.phase !== "turn" || prev.turnOf !== next.turnOf || prev.round !== next.round;
+    if (!newTurn) return;
+    const who = next.turnOf === myId ? "Your turn!" : `${name(next.turnOf)}'s turn.`;
+    const newRound = !prev || prev.round !== next.round || prev.phase === "lobby" || prev.phase === "over";
+    announce(newRound ? `${roundLine(next.round, next.players.map((p) => p.wins))} ${who}` : who);
+  } else if (next.phase === "over" && prev?.phase !== "over") {
+    if (next.winner === "draw") return announce("It's a draw!");
+    const loser = next.players.find((p) => p.id !== next.winner);
+    const flawless = loser && loser.wins === 0 ? " Flawless victory!" : "";
+    announce(`${next.winner === myId ? "You win!" : `${name(next.winner)} wins!`}${flawless}`);
+  }
+}
+
+function renderMute() {
+  $("btnMute").textContent = isMuted() ? "🔇" : "🔊";
+  $("btnMute").title = isMuted() ? "Announcer off" : "Announcer on";
+}
+
 // ---------- messages ----------
 
 function onMessage(m) {
@@ -492,6 +517,7 @@ function onMessage(m) {
       break;
     case "state":
       if (m.turnOf !== state?.turnOf || m.phase !== "turn") oppRecording = false;
+      announceTransition(state, m);
       state = m;
       history.replaceState(null, "", `/r/${m.code}`);
       syncPeer();
@@ -507,6 +533,7 @@ function onMessage(m) {
     case "clip": {
       const url = m.audio ? `data:${m.mime || "audio/webm"};base64,${m.audio}` : null;
       if (url) clipUrls[m.from] = url;
+      announce(scoreLine(m.score));
       // you already heard it live over the video call; play it only if the call isn't connected
       if (url && m.from !== myId && pc?.connectionState !== "connected") new Audio(url).play().catch(() => {});
       renderRoom();
@@ -519,6 +546,7 @@ function onMessage(m) {
         safeSet("practiceBest", String(practiceBest));
       }
       $("practiceBest").textContent = practiceBest || "—";
+      announce(scoreLine(score));
       $("practiceTile").querySelector(".cardSlot").innerHTML = scoreCard(score, practiceAudio);
       armPracticeButton();
       break;
@@ -527,6 +555,13 @@ function onMessage(m) {
 }
 
 // ---------- wiring ----------
+
+$("btnMute").onclick = () => {
+  setMuted(!isMuted());
+  renderMute();
+  if (!isMuted()) announce("Jjinja!");
+};
+renderMute();
 
 $("name").value = safeGet("name") ?? "";
 $("name").addEventListener("change", () => {

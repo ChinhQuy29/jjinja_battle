@@ -228,3 +228,6 @@ td.won { color: var(--good); font-weight: 800; }
   .card .replay { padding: 4px 10px; font-size: 0.75rem; }
   .badge.big { font-size: 0.95rem; padding: 10px; }
 }
+
+header { position: relative; }
+.mute { position: absolute; top: 0; right: 0; font-size: 1.1rem; padding: 6px 10px; }
