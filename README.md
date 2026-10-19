@@ -33,6 +33,10 @@ It prints a link like `https://something-random.trycloudflare.com`. Both of you 
 
 **Random match** pairs anyone who clicks it at the same time. **Practice** scores you solo and keeps a personal best.
 
+## Put it online
+
+See [DEPLOY.md](DEPLOY.md): a ~$5/month VPS, a free DuckDNS subdomain, automatic HTTPS, and a video relay, set up with one script.
+
 ## Layout
 
 - `server/index.ts`: HTTP + WebSocket server (rooms, invite codes, matchmaking queue, turns, timers)

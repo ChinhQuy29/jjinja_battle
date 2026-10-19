@@ -4,7 +4,8 @@ import { announce, botSpeak, hush, isMuted, roundLine, scoreLine, setMuted } fro
 
 const MAX_RECORD_MS = 3000;
 const LONGER_RALLY_MAX_MS = 8000; // a 3s cap would make "longer" rallies unbeatable after one turn
-const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
+// replaced by the server's list (which adds our TURN relay in production) on connect
+let iceServers = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
 const $ = (id) => document.getElementById(id);
 
 // ---------- connection ----------
@@ -125,7 +126,7 @@ async function createPeer(iAmCaller) {
   try {
     stream = await getMedia();
   } catch {}
-  const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const conn = new RTCPeerConnection({ iceServers });
   pc = conn;
   remoteStream = new MediaStream();
 
@@ -640,6 +641,7 @@ function onMessage(m) {
     case "welcome":
       myId = m.id;
       challenges = m.challenges ?? [];
+      if (m.iceServers?.length) iceServers = m.iceServers;
       renderChallengePicker();
       break;
     case "error":

@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
 import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
@@ -15,6 +15,10 @@ const PORT = Number(process.env.PORT ?? 3000);
 const HOST = process.env.HOST ?? "0.0.0.0";
 // behind Caddy, the real client IP arrives in X-Forwarded-For
 const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+// coturn relay for players whose networks block direct video (set by deploy/setup.sh)
+const TURN_HOST = process.env.TURN_HOST;
+const TURN_SECRET = process.env.TURN_SECRET;
+const STUN_URLS = ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"];
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 const TURN_MS = 15_000;
 const RALLY_TURN_MS = 10_000; // rallies are meant to be quick
@@ -403,6 +407,17 @@ function dequeue(p: Player) {
 
 const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: 1_000_000 });
 
+// Short-lived TURN credentials (coturn "use-auth-secret"), so the relay can't be used freely.
+function iceServers(playerId: string) {
+  const servers: object[] = [{ urls: STUN_URLS }];
+  if (TURN_HOST && TURN_SECRET) {
+    const username = `${Math.floor(Date.now() / 1000) + 6 * 3600}:${playerId}`;
+    const credential = createHmac("sha1", TURN_SECRET).update(username).digest("base64");
+    servers.push({ urls: [`turn:${TURN_HOST}:3478?transport=udp`, `turn:${TURN_HOST}:3478?transport=tcp`], username, credential });
+  }
+  return servers;
+}
+
 function clientIp(req: import("node:http").IncomingMessage) {
   const direct = req.socket.remoteAddress ?? "unknown";
   const forwarded = req.headers["x-forwarded-for"];
@@ -415,7 +430,7 @@ wss.on("connection", (ws, req) => {
   if (!openConnection(ip)) return ws.close(1013, "Too many connections");
   const budget = new MessageBudget();
   const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, ws, bot: false, room: null, queued: false };
-  send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo) });
+  send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo), iceServers: iceServers(p.id) });
 
   ws.on("message", (data) => {
     const verdict = budget.take();
