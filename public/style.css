@@ -231,3 +231,20 @@ td.won { color: var(--good); font-weight: 800; }
 
 header { position: relative; }
 .mute { position: absolute; top: 0; right: 0; font-size: 1.1rem; padding: 6px 10px; }
+
+/* ---------- funniest faces ---------- */
+
+.faceThumb { display: block; width: 100%; max-height: 160px; object-fit: cover; border-radius: 10px; margin-bottom: 8px; }
+.stage:not(.solo) .faceThumb { display: none; }
+#overFaces h3 { margin: 6px 0 10px; }
+.faces { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 220px)); justify-content: center; gap: 18px; margin-bottom: 16px; }
+.polaroid {
+  margin: 0; padding: 10px 10px 12px; background: #fff; color: #1d1530;
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.polaroid:nth-child(odd) { transform: rotate(-2.5deg); }
+.polaroid:nth-child(even) { transform: rotate(2deg); }
+.polaroid img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; }
+.polaroid figcaption { margin-top: 8px; }
+.polaroid figcaption small { display: block; color: #6b6280; }
+.polaroid a { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 700; text-decoration: none; }

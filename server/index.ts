@@ -12,6 +12,7 @@ const TURN_MS = 15_000;
 const WINS_NEEDED = 2; // best of 3
 const MAX_ROUNDS = 5; // ties extend the match a little
 const MAX_AUDIO_BYTES = 400_000;
+const MAX_FACE_CHARS = 150_000; // ~110 KB JPEG as a data URL
 
 // ---------- static files ----------
 
@@ -68,6 +69,7 @@ interface Room {
   history: RoundResult[];
   current: Record<string, Score>;
   winner: string | null; // player id, "draw", or null
+  faces: Record<string, { image: string; funny: number; round: number }>; // each player's funniest snapshot
   notice: string | null;
   timer: NodeJS.Timeout | null;
 }
@@ -106,6 +108,7 @@ function createRoom(): Room {
     history: [],
     current: {},
     winner: null,
+    faces: {},
     notice: null,
     timer: null,
   };
@@ -126,6 +129,7 @@ function pushState(room: Room) {
     current: room.current,
     history: room.history,
     winner: room.winner,
+    faces: room.phase === "over" ? room.faces : undefined, // images are large; only send for the results screen
     notice: room.notice,
   });
 }
@@ -171,6 +175,7 @@ function resetToLobby(room: Room) {
   room.history = [];
   room.current = {};
   room.winner = null;
+  room.faces = {};
 }
 
 function startMatch(room: Room) {
@@ -200,7 +205,7 @@ function startTurn(room: Room) {
   pushState(room);
 }
 
-function submit(room: Room, playerId: string, payload: { features: unknown; audio?: string; mime?: string } | null) {
+function submit(room: Room, playerId: string, payload: { features: unknown; audio?: string; mime?: string; face?: string } | null) {
   if (room.phase !== "turn" || room.turnOf !== playerId) return;
   clearTimer(room);
 
@@ -208,6 +213,10 @@ function submit(room: Room, playerId: string, payload: { features: unknown; audi
   const score = features ? grade(features) : timeoutScore();
   room.current[playerId] = score;
   room.phase = "reveal";
+  const best = room.faces[playerId];
+  if (payload?.face && (!best || score.funny > best.funny)) {
+    room.faces[playerId] = { image: payload.face, funny: score.funny, round: room.round };
+  }
 
   broadcast(room, { t: "clip", from: playerId, audio: payload?.audio ?? null, mime: payload?.mime ?? null, score });
   pushState(room);
@@ -331,7 +340,11 @@ wss.on("connection", (ws) => {
         if (!p.room) return;
         const audio = typeof msg.audio === "string" && msg.audio.length <= MAX_AUDIO_BYTES * 1.4 ? msg.audio : undefined;
         const mime = typeof msg.mime === "string" ? msg.mime.slice(0, 60) : undefined;
-        submit(p.room, p.id, { features: msg.features, audio, mime });
+        const face =
+          typeof msg.face === "string" && msg.face.startsWith("data:image/jpeg;base64,") && msg.face.length <= MAX_FACE_CHARS
+            ? msg.face
+            : undefined;
+        submit(p.room, p.id, { features: msg.features, audio, mime, face });
         break;
       }
       case "signal": // WebRTC offer/answer/ICE, relayed to the opponent

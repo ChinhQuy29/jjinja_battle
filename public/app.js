@@ -1,4 +1,5 @@
 import { analyze } from "./features.js";
+import { startFaceCapture } from "./face.js";
 import { announce, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
 
 const MAX_RECORD_MS = 3000;
@@ -182,7 +183,8 @@ function pickMime() {
   return options.find((m) => window.MediaRecorder?.isTypeSupported?.(m)) ?? "";
 }
 
-// Records mic audio for up to 3s. Tap again to stop early. Resolves with the Blob.
+// Records mic audio for up to 3s. Tap again to stop early.
+// Resolves with the audio Blob and a snapshot of the loudest (funniest) moment.
 async function record(button, meterEl) {
   const stream = await getMedia();
   const audioOnly = new MediaStream(stream.getAudioTracks());
@@ -192,13 +194,14 @@ async function record(button, meterEl) {
     const chunks = [];
     let raf;
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    rec.onstop = () => {
+    let face = null;
+    rec.onstop = async () => {
       button.onclick = null;
       button.classList.remove("live");
       cancelAnimationFrame(raf);
       clearTimeout(cap);
       meterEl.style.width = "0%";
-      resolve(new Blob(chunks, { type: rec.mimeType || mime }));
+      resolve({ blob: new Blob(chunks, { type: rec.mimeType || mime }), face: await face.stop() });
     };
 
     const started = performance.now();
@@ -212,6 +215,7 @@ async function record(button, meterEl) {
     const cap = setTimeout(stop, MAX_RECORD_MS);
 
     hush(); // keep the announcer out of the recording
+    face = startFaceCapture(stream);
     rec.start();
     button.classList.add("live");
     button.innerHTML = "⏹<small>tap to stop</small>";
@@ -234,10 +238,11 @@ const recordButtonHtml = `
   <button class="recBtn">🎤<small>tap &amp; say it</small></button>
   <div class="meter"><div></div></div>`;
 
-function scoreCard(score, audioUrl = null) {
+function scoreCard(score, audioUrl = null, face = null) {
   const bar = (label, v) => `<div class="bar"><span>${label}</span><div><i style="width:${v}%"></i></div><b>${v}</b></div>`;
   return `
     <div class="card pop">
+      ${face ? `<img class="faceThumb" src="${face}" alt="Your face at the loudest moment" />` : ""}
       <div class="total">${score.total}<small>/100</small></div>
       ${bar("Pron.", score.pronunciation)}
       ${bar("Tone", score.tone)}
@@ -277,6 +282,7 @@ function safeSet(k, v) {
 
 let practiceBest = Number(safeGet("practiceBest") ?? 0) || 0;
 let practiceAudio = null;
+let practiceFace = null;
 
 async function openPractice() {
   show("practice");
@@ -305,9 +311,10 @@ async function practiceRound() {
   const btn = tile.querySelector(".recBtn");
   try {
     tile.querySelector(".cardSlot").innerHTML = "";
-    const blob = await record(btn, tile.querySelector(".meter div"));
+    const { blob, face } = await record(btn, tile.querySelector(".meter div"));
     btn.innerHTML = "⏳<small>judging</small>";
     btn.disabled = true;
+    practiceFace = face;
     if (practiceAudio) URL.revokeObjectURL(practiceAudio);
     practiceAudio = URL.createObjectURL(blob);
     send({ t: "practice", features: await analyze(blob) });
@@ -327,12 +334,12 @@ let clipRound = 0;
 async function matchTurn(btn, meter) {
   try {
     send({ t: "rec", on: true });
-    const blob = await record(btn, meter);
+    const { blob, face } = await record(btn, meter);
     send({ t: "rec", on: false });
     btn.innerHTML = "⏳<small>judging</small>";
     btn.disabled = true;
     const [features, audio] = await Promise.all([analyze(blob), blobToBase64(blob)]);
-    send({ t: "submit", features, audio, mime: blob.type });
+    send({ t: "submit", features, audio, mime: blob.type, face });
   } catch (err) {
     send({ t: "rec", on: false });
     $("mediaError").textContent = err.message || String(err);
@@ -448,9 +455,28 @@ function renderRoom() {
       .join("");
     $("overTable").innerHTML = `<table><tr><th></th>${ids.map((id) => `<th>${escapeHtml(nameOf(id))}</th>`).join("")}</tr>${rows}</table>`;
     $("btnRematch").textContent = me?.ready ? "Waiting for opponent…" : "Rematch";
+    renderFaces(s);
   }
 
   renderTiles();
+}
+
+function renderFaces(s) {
+  const faces = s.faces ?? {};
+  const cards = s.players
+    .filter((p) => faces[p.id])
+    .map((p) => {
+      const f = faces[p.id];
+      const file = `jjinja-${p.name.replace(/[^\w-]+/g, "_")}.jpg`;
+      return `
+        <figure class="polaroid">
+          <img src="${f.image}" alt="${escapeHtml(p.name)}'s funniest face" />
+          <figcaption><b>${escapeHtml(p.name)}</b><small>Round ${f.round} · Funny ${f.funny}</small></figcaption>
+          <a class="small" href="${f.image}" download="${file}">Save</a>
+        </figure>`;
+    })
+    .join("");
+  $("overFaces").innerHTML = cards ? `<h3>Funniest faces</h3><div class="faces">${cards}</div>` : "";
 }
 
 let timerDeadline = 0;
@@ -547,7 +573,7 @@ function onMessage(m) {
       }
       $("practiceBest").textContent = practiceBest || "—";
       announce(scoreLine(score));
-      $("practiceTile").querySelector(".cardSlot").innerHTML = scoreCard(score, practiceAudio);
+      $("practiceTile").querySelector(".cardSlot").innerHTML = scoreCard(score, practiceAudio, practiceFace);
       armPracticeButton();
       break;
     }
