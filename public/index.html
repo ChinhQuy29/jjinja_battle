@@ -44,7 +44,11 @@
     <!-- practice -->
     <section id="practice" class="screen hidden">
       <h2>Practice room</h2>
-      <p class="hint">Go for the meme: a sharp "JJIN", then a long, rising "JAAA?"</p>
+      <label class="challengePick">
+        <span>Challenge</span>
+        <select id="practiceChallenge"></select>
+      </label>
+      <p class="hint" id="practiceHint"></p>
       <div class="stage solo">
         <div class="tile" id="practiceTile">
           <video playsinline autoplay muted class="mirror"></video>
@@ -67,6 +71,7 @@
 
       <div class="status">
         <p class="round" id="roundLabel"></p>
+        <div class="challenge" id="challengeLabel"></div>
         <p class="turn" id="turnLabel"></p>
         <div class="timer"><div id="timerBar"></div></div>
       </div>

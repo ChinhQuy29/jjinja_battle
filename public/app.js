@@ -11,6 +11,7 @@ const $ = (id) => document.getElementById(id);
 let ws;
 let myId = null;
 let state = null;
+let challenges = []; // sent by the server on connect
 const pending = []; // messages queued while (re)connecting
 
 function connect() {
@@ -245,7 +246,7 @@ function scoreCard(score, audioUrl = null, face = null) {
       ${face ? `<img class="faceThumb" src="${face}" alt="Your face at the loudest moment" />` : ""}
       <div class="total">${score.total}<small>/100</small></div>
       ${bar("Pron.", score.pronunciation)}
-      ${bar("Tone", score.tone)}
+      ${bar(escapeHtml(score.label ?? "Tone"), score.tone)}
       ${bar("Funny", score.funny)}
       <p class="comment">“${escapeHtml(score.comment)}”</p>
       ${audioUrl ? `<button class="small replay" data-src="${audioUrl}">▶ Replay</button>` : ""}
@@ -284,6 +285,19 @@ let practiceBest = Number(safeGet("practiceBest") ?? 0) || 0;
 let practiceAudio = null;
 let practiceFace = null;
 
+function renderChallengePicker() {
+  const select = $("practiceChallenge");
+  const current = select.value || "classic";
+  select.innerHTML = challenges.map((c) => `<option value="${c.id}">${c.emoji} ${escapeHtml(c.title)}</option>`).join("");
+  select.value = challenges.some((c) => c.id === current) ? current : "classic";
+  renderChallengeHint();
+}
+
+function renderChallengeHint() {
+  const c = challenges.find((x) => x.id === $("practiceChallenge").value);
+  $("practiceHint").textContent = c ? c.hint : "";
+}
+
 async function openPractice() {
   show("practice");
   $("practiceBest").textContent = practiceBest || "—";
@@ -317,7 +331,7 @@ async function practiceRound() {
     practiceFace = face;
     if (practiceAudio) URL.revokeObjectURL(practiceAudio);
     practiceAudio = URL.createObjectURL(blob);
-    send({ t: "practice", features: await analyze(blob) });
+    send({ t: "practice", features: await analyze(blob), challenge: $("practiceChallenge").value });
   } catch (err) {
     $("practiceError").textContent = err.message || String(err);
     armPracticeButton();
@@ -438,6 +452,10 @@ function renderRoom() {
 
   document.querySelector(".status").classList.toggle("hidden", !inMatch);
   $("roundLabel").textContent = inMatch ? `Round ${s.round}` : "";
+  const c = inMatch ? s.challenge : null;
+  $("challengeLabel").innerHTML = c
+    ? `<span class="cEmoji">${c.emoji}</span><span><b>${escapeHtml(c.title)}</b><small>${escapeHtml(c.hint)}</small></span>`
+    : "";
   if (s.phase === "turn") {
     $("turnLabel").textContent = s.turnOf === myId ? "Your turn! Say it: JJINJA?!" : `${nameOf(s.turnOf)} is up…`;
     startTimer(s.deadline - s.now + Date.now());
@@ -451,7 +469,7 @@ function renderRoom() {
       s.winner === "draw" ? "It's a draw. Jjinja?" : s.winner === myId ? "🏆 You win! JJINJA!" : `${nameOf(s.winner)} wins. Jjinja…?`;
     const ids = s.players.map((p) => p.id);
     const rows = s.history
-      .map((r) => `<tr><td>R${r.round}</td>${ids.map((id) => `<td class="${r.winner === id ? "won" : ""}">${r.scores[id]?.total ?? "-"}</td>`).join("")}</tr>`)
+      .map((r) => `<tr><td>R${r.round} <small>${escapeHtml(r.challenge ?? "")}</small></td>${ids.map((id) => `<td class="${r.winner === id ? "won" : ""}">${r.scores[id]?.total ?? "-"}</td>`).join("")}</tr>`)
       .join("");
     $("overTable").innerHTML = `<table><tr><th></th>${ids.map((id) => `<th>${escapeHtml(nameOf(id))}</th>`).join("")}</tr>${rows}</table>`;
     $("btnRematch").textContent = me?.ready ? "Waiting for opponent…" : "Rematch";
@@ -510,7 +528,8 @@ function announceTransition(prev, next) {
     if (!newTurn) return;
     const who = next.turnOf === myId ? "Your turn!" : `${name(next.turnOf)}'s turn.`;
     const newRound = !prev || prev.round !== next.round || prev.phase === "lobby" || prev.phase === "over";
-    announce(newRound ? `${roundLine(next.round, next.players.map((p) => p.wins))} ${who}` : who);
+    const twist = next.challenge && next.challenge.id !== "classic" ? ` ${next.challenge.title}!` : "";
+    announce(newRound ? `${roundLine(next.round, next.players.map((p) => p.wins))}${twist} ${who}` : who);
   } else if (next.phase === "over" && prev?.phase !== "over") {
     if (next.winner === "draw") return announce("It's a draw!");
     const loser = next.players.find((p) => p.id !== next.winner);
@@ -530,6 +549,8 @@ function onMessage(m) {
   switch (m.t) {
     case "welcome":
       myId = m.id;
+      challenges = m.challenges ?? [];
+      renderChallengePicker();
       break;
     case "error":
       $("homeError").textContent = m.msg;
@@ -611,6 +632,10 @@ $("btnPractice").onclick = () => {
   openPractice();
 };
 $("btnPracticeBack").onclick = () => show("home");
+$("practiceChallenge").onchange = () => {
+  renderChallengeHint();
+  $("practiceTile").querySelector(".cardSlot").innerHTML = "";
+};
 $("btnCreate").onclick = () => {
   requireName();
   send({ t: "create" });

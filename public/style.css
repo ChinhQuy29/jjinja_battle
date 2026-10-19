@@ -248,3 +248,25 @@ header { position: relative; }
 .polaroid figcaption { margin-top: 8px; }
 .polaroid figcaption small { display: block; color: #6b6280; }
 .polaroid a { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 700; text-decoration: none; }
+
+/* ---------- challenges ---------- */
+
+.challenge:empty { display: none; }
+.challenge {
+  display: inline-flex; align-items: center; gap: 10px;
+  margin: 6px auto 2px; padding: 8px 16px;
+  border-radius: 14px; text-align: left;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent-2) 18%, transparent));
+  border: 1px solid var(--line);
+}
+.challenge .cEmoji { font-size: 1.9rem; line-height: 1; }
+.challenge b { display: block; }
+.challenge small { display: block; color: var(--muted); }
+.challenge.pop, .challenge { animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.challengePick { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 0; }
+.challengePick span { color: var(--muted); font-size: 0.9rem; }
+select {
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font-size: 1rem;
+}
+td small { color: var(--muted); }

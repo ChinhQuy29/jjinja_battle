@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
+import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
@@ -49,6 +50,7 @@ interface Player {
 
 interface RoundResult {
   round: number;
+  challenge: string;
   scores: Record<string, Score>;
   winner: string | null;
 }
@@ -68,6 +70,8 @@ interface Room {
   wins: Record<string, number>;
   history: RoundResult[];
   current: Record<string, Score>;
+  challenge: Challenge; // this round's twist
+  usedChallenges: string[];
   winner: string | null; // player id, "draw", or null
   faces: Record<string, { image: string; funny: number; round: number }>; // each player's funniest snapshot
   notice: string | null;
@@ -107,6 +111,8 @@ function createRoom(): Room {
     wins: {},
     history: [],
     current: {},
+    challenge: CHALLENGES[0],
+    usedChallenges: [],
     winner: null,
     faces: {},
     notice: null,
@@ -123,6 +129,7 @@ function pushState(room: Room) {
     phase: room.phase,
     players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0 })),
     round: room.round,
+    challenge: room.phase === "turn" || room.phase === "reveal" ? publicInfo(room.challenge) : null,
     turnOf: room.turnOf,
     deadline: room.deadline,
     now: Date.now(),
@@ -174,6 +181,7 @@ function resetToLobby(room: Room) {
   room.wins = {};
   room.history = [];
   room.current = {};
+  room.usedChallenges = [];
   room.winner = null;
   room.faces = {};
 }
@@ -189,6 +197,8 @@ function startMatch(room: Room) {
 function startRound(room: Room) {
   room.round += 1;
   room.current = {};
+  room.challenge = pickChallenge(room.usedChallenges);
+  room.usedChallenges.push(room.challenge.id);
   const ids = room.players.map((p) => p.id);
   // alternate who goes first each round
   room.order = room.round % 2 === 1 ? ids : [...ids].reverse();
@@ -210,7 +220,7 @@ function submit(room: Room, playerId: string, payload: { features: unknown; audi
   clearTimer(room);
 
   const features = payload ? sanitize(payload.features) : null;
-  const score = features ? grade(features) : timeoutScore();
+  const score = features ? grade(features, room.challenge.id) : timeoutScore(room.challenge.id);
   room.current[playerId] = score;
   room.phase = "reveal";
   const best = room.faces[playerId];
@@ -235,7 +245,7 @@ function afterReveal(room: Room) {
   const sb = room.current[b]?.total ?? 0;
   const winner = sa === sb ? null : sa > sb ? a : b;
   if (winner) room.wins[winner] = (room.wins[winner] ?? 0) + 1;
-  room.history.push({ round: room.round, scores: room.current, winner });
+  room.history.push({ round: room.round, challenge: `${room.challenge.emoji} ${room.challenge.title}`, scores: room.current, winner });
 
   const champ = room.players.find((p) => (room.wins[p.id] ?? 0) >= WINS_NEEDED);
   if (champ || room.round >= MAX_ROUNDS) {
@@ -284,7 +294,7 @@ const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: 1_000_0
 
 wss.on("connection", (ws) => {
   const p: Player = { id: randomUUID(), name: "Guest", ws, room: null, queued: false };
-  send(p, { t: "welcome", id: p.id });
+  send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo) });
 
   ws.on("message", (data) => {
     let msg: any;
@@ -355,7 +365,7 @@ wss.on("connection", (ws) => {
         break;
       }
       case "practice":
-        send(p, { t: "practiceResult", score: grade(sanitize(msg.features)) });
+        send(p, { t: "practiceResult", score: grade(sanitize(msg.features), msg.challenge) });
         break;
     }
   });
