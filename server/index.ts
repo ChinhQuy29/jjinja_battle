@@ -6,9 +6,13 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
 import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
+import { blocked, cleanName, isBanned, report } from "./safety.js";
 import { hintFor, pickAxis, playRally, type Axis, type RallyResult } from "./rally.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
+const HOST = process.env.HOST ?? "0.0.0.0";
+// behind Caddy, the real client IP arrives in X-Forwarded-For
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 const TURN_MS = 15_000;
 const RALLY_TURN_MS = 10_000; // rallies are meant to be quick
@@ -46,6 +50,9 @@ const http = createServer(async (req, res) => {
 interface Player {
   id: string;
   name: string;
+  ip: string;
+  adult: boolean; // confirmed 18+, required to turn the camera on in random matches
+  cam: boolean; // consented to show their camera in a random match
   ws: WebSocket;
   room: Room | null;
   queued: boolean;
@@ -74,6 +81,7 @@ interface Room {
   players: Player[];
   ready: Set<string>;
   phase: Phase;
+  kind: "private" | "random"; // random rooms keep cameras off until both players opt in
   mode: Mode;
   rally: Rally | null;
   round: number;
@@ -111,12 +119,13 @@ function newCode() {
   return code;
 }
 
-function createRoom(): Room {
+function createRoom(kind: Room["kind"] = "private"): Room {
   const room: Room = {
     code: newCode(),
     players: [],
     ready: new Set(),
     phase: "lobby",
+    kind,
     mode: "classic",
     rally: null,
     round: 0,
@@ -143,8 +152,9 @@ function pushState(room: Room) {
     t: "state",
     code: room.code,
     phase: room.phase,
+    kind: room.kind,
     mode: room.mode,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0 })),
+    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0, cam: p.cam })),
     round: room.round,
     challenge: room.phase === "turn" || room.phase === "reveal" ? roundInfo(room) : null,
     turnOf: room.turnOf,
@@ -174,6 +184,7 @@ function joinRoom(p: Player, room: Room) {
   leaveRoom(p);
   room.players.push(p);
   p.room = room;
+  p.cam = false;
   room.notice = null;
   pushState(room);
 }
@@ -332,12 +343,25 @@ function decideByTotals(room: Room): string {
   return totals.length > 1 && totals[0].sum === totals[1].sum ? "draw" : totals[0].id;
 }
 
+// pairs the longest-waiting players who haven't blocked each other
+function nextPair(): [Player, Player] | null {
+  for (let i = 0; i < queue.length; i++) {
+    for (let j = i + 1; j < queue.length; j++) {
+      if (!blocked(queue[i].ip, queue[j].ip)) {
+        const b = queue.splice(j, 1)[0];
+        const a = queue.splice(i, 1)[0];
+        return [a, b];
+      }
+    }
+  }
+  return null;
+}
+
 function tryMatchmake() {
-  while (queue.length >= 2) {
-    const a = queue.shift()!;
-    const b = queue.shift()!;
+  for (let pair = nextPair(); pair; pair = nextPair()) {
+    const [a, b] = pair;
     a.queued = b.queued = false;
-    const room = createRoom();
+    const room = createRoom("random");
     joinRoom(a, room);
     joinRoom(b, room);
     // random matches skip the ready check
@@ -357,8 +381,15 @@ function dequeue(p: Player) {
 
 const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: 1_000_000 });
 
-wss.on("connection", (ws) => {
-  const p: Player = { id: randomUUID(), name: "Guest", ws, room: null, queued: false };
+function clientIp(req: import("node:http").IncomingMessage) {
+  const direct = req.socket.remoteAddress ?? "unknown";
+  const forwarded = req.headers["x-forwarded-for"];
+  if (TRUST_PROXY && typeof forwarded === "string" && forwarded) return forwarded.split(",")[0].trim();
+  return direct;
+}
+
+wss.on("connection", (ws, req) => {
+  const p: Player = { id: randomUUID(), name: "Guest", ip: clientIp(req), adult: false, cam: false, ws, room: null, queued: false };
   send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo) });
 
   ws.on("message", (data) => {
@@ -370,7 +401,9 @@ wss.on("connection", (ws) => {
     }
     switch (msg.t) {
       case "hello":
-        p.name = String(msg.name ?? "").trim().slice(0, 20) || `Guest${Math.floor(Math.random() * 1000)}`;
+        p.name = cleanName(msg.name);
+        p.adult = msg.adult === true;
+        if (!p.adult && p.cam) p.cam = false;
         if (p.room) pushState(p.room);
         break;
       case "create":
@@ -388,6 +421,12 @@ wss.on("connection", (ws) => {
       }
       case "quick":
         leaveRoom(p);
+        if (isBanned(p.ip)) {
+          return send(p, {
+            t: "error",
+            msg: "Random matches are paused for you for 24 hours after several reports. You can still invite friends.",
+          });
+        }
         if (!p.queued) {
           p.queued = true;
           queue.push(p);
@@ -437,6 +476,23 @@ wss.on("connection", (ws) => {
         if (other) send(other, { t: msg.t, from: p.id, data: msg.data, on: !!msg.on });
         break;
       }
+      case "cam": {
+        // camera consent only matters in random rooms, and only adults may turn it on
+        if (!p.room || p.room.kind !== "random") return;
+        p.cam = msg.on === true && p.adult;
+        pushState(p.room);
+        break;
+      }
+      case "report": {
+        const room = p.room;
+        const other = room?.players.find((x) => x !== p);
+        if (!room || !other) return;
+        const reason = ["video", "harassment", "name", "other"].includes(msg.reason) ? msg.reason : "other";
+        report(p.ip, other.ip, { reason, reporter: p.name, reported: other.name });
+        leaveRoom(p);
+        send(p, { t: "reported" });
+        break;
+      }
       case "practice":
         send(p, { t: "practiceResult", score: grade(sanitize(msg.features), msg.challenge) });
         break;
@@ -449,6 +505,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-http.listen(PORT, () => {
-  console.log(`Jjinja Battle running at http://localhost:${PORT}`);
+http.listen(PORT, HOST, () => {
+  console.log(`Jjinja Battle running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
 });

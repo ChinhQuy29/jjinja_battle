@@ -20,7 +20,7 @@ function connect() {
   ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen = () => {
     $("conn").textContent = "";
-    send({ t: "hello", name: myName() });
+    send({ t: "hello", name: myName(), adult: ageChoice() === "adult" });
     while (pending.length) ws.send(JSON.stringify(pending.shift()));
   };
   ws.onclose = () => {
@@ -88,7 +88,7 @@ function hasVideo(stream) {
   return !!stream?.getVideoTracks().some((t) => t.readyState === "live");
 }
 
-function attach(tile, stream, { mine }) {
+function attach(tile, stream, { mine, hideVideo = false }) {
   const video = tile.querySelector("video");
   if (video.srcObject !== stream) {
     video.srcObject = stream;
@@ -96,12 +96,14 @@ function attach(tile, stream, { mine }) {
   }
   video.muted = mine; // never play your own mic back
   video.classList.toggle("mirror", mine);
-  tile.classList.toggle("camOff", !hasVideo(stream));
+  tile.classList.toggle("camOff", hideVideo || !hasVideo(stream));
 }
 
 // ---------- WebRTC (peer-to-peer video between the two players) ----------
 
 let pc = null;
+let videoSender = null;
+let sendingVideo = null; // last applied consent state
 let peerId = null;
 let remoteStream = null;
 let peerReady = null;
@@ -126,7 +128,14 @@ async function createPeer(iAmCaller) {
   pc = conn;
   remoteStream = new MediaStream();
 
-  if (stream) for (const track of stream.getTracks()) conn.addTrack(track, stream);
+  if (stream) {
+    for (const track of stream.getTracks()) {
+      const sender = conn.addTrack(track, stream);
+      if (track.kind === "video") videoSender = sender;
+    }
+  }
+  sendingVideo = null;
+  applyVideoConsent();
   if (!stream?.getAudioTracks().length) conn.addTransceiver("audio", { direction: "recvonly" });
   if (!stream?.getVideoTracks().length) conn.addTransceiver("video", { direction: "recvonly" });
 
@@ -168,9 +177,26 @@ function onSignal(from, data) {
     .catch((err) => console.warn("signal error", err));
 }
 
+// In random matches no video frames leave this device until both players opt in.
+function videoAllowed() {
+  if (!state || state.kind !== "random") return true;
+  return state.players.length === 2 && state.players.every((p) => p.cam);
+}
+
+function applyVideoConsent() {
+  if (!videoSender) return;
+  const allow = videoAllowed();
+  if (allow === sendingVideo) return;
+  sendingVideo = allow;
+  const track = allow ? localStream?.getVideoTracks()[0] ?? null : null;
+  videoSender.replaceTrack(track).catch(() => {});
+}
+
 function closePeer() {
   pc?.close();
   pc = null;
+  videoSender = null;
+  sendingVideo = null;
   peerId = null;
   remoteStream = null;
   peerReady = null;
@@ -422,12 +448,15 @@ function renderTiles() {
     tile.classList.toggle("empty", !p);
     tile.classList.toggle("me", p?.id === myId);
     tile.classList.toggle("active", !!p && s.phase === "turn" && s.turnOf === p.id);
-    tile.querySelector(".pname").textContent = p ? `${p.name}${p.id === myId ? " (you)" : ""}` : "";
+    const hiddenTag = s.kind === "random" && p && !videoAllowed() ? " · 🔒 cam off" : "";
+    tile.querySelector(".pname").textContent = p ? `${p.name}${p.id === myId ? " (you)" : ""}${hiddenTag}` : "";
+    tile.querySelector(".reportBtn").hidden = !p || p.id === myId;
     tile.querySelector(".wins").textContent = p ? "★".repeat(p.wins) + "☆".repeat(Math.max(0, 2 - p.wins)) : "";
 
     if (!p) attach(tile, null, { mine: false });
     else if (p.id === myId) attach(tile, localStream, { mine: true });
-    else attach(tile, remoteStream, { mine: false });
+    // receiver-side check too: their video stays hidden unless both agreed (audio keeps playing)
+    else attach(tile, remoteStream, { mine: false, hideVideo: !videoAllowed() });
 
     const overlay = tile.querySelector(".overlay");
     const o = overlayFor(p);
@@ -499,7 +528,34 @@ function renderRoom() {
     renderFaces(s);
   }
 
+  renderCamConsent();
+  applyVideoConsent();
   renderTiles();
+}
+
+function renderCamConsent() {
+  const s = state;
+  const panel = $("camConsent");
+  const show = s.kind === "random" && s.players.length === 2;
+  panel.classList.toggle("hidden", !show);
+  if (!show) return;
+  const me = s.players.find((p) => p.id === myId);
+  const opp = s.players.find((p) => p.id !== myId);
+  const btn = $("btnCam");
+  if (ageChoice() !== "adult") {
+    $("camText").textContent = "Cameras stay off in random matches for players under 18. Audio still works!";
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  btn.textContent = me?.cam ? "📷 Hide my camera" : "📷 Show my camera";
+  $("camText").textContent = videoAllowed()
+    ? "Cameras are on for both of you."
+    : me?.cam
+      ? `Waiting for ${opp?.name ?? "your opponent"} to turn their camera on too.`
+      : opp?.cam
+        ? `${opp.name} wants cameras on. Video shows only if you both agree.`
+        : "Cameras are off in random matches. Video shows only if you both turn them on.";
 }
 
 function renderFaces(s) {
@@ -599,6 +655,13 @@ function onMessage(m) {
       syncPeer();
       renderRoom();
       break;
+    case "reported":
+      state = null;
+      closePeer();
+      history.replaceState(null, "", "/");
+      show("home");
+      $("homeError").textContent = "Thanks for reporting. You won't be matched with that player again.";
+      break;
     case "signal":
       onSignal(m.from, m.data);
       break;
@@ -642,13 +705,13 @@ renderMute();
 $("name").value = safeGet("name") ?? "";
 $("name").addEventListener("change", () => {
   safeSet("name", myName());
-  send({ t: "hello", name: myName() });
+  send({ t: "hello", name: myName(), adult: ageChoice() === "adult" });
 });
 
 function requireName() {
   if (!myName()) $("name").value = `Guest${Math.floor(Math.random() * 1000)}`;
   safeSet("name", myName());
-  send({ t: "hello", name: myName() });
+  send({ t: "hello", name: myName(), adult: ageChoice() === "adult" });
   $("homeError").textContent = "";
   $("mediaError").textContent = "";
   getMedia()
@@ -669,9 +732,37 @@ $("btnCreate").onclick = () => {
   requireName();
   send({ t: "create" });
 };
+function ageChoice() {
+  return safeGet("ageChoice");
+}
+
 $("btnQuick").onclick = () => {
+  if (!ageChoice()) return $("ageGate").showModal();
   requireName();
   send({ t: "quick" });
+};
+for (const b of document.querySelectorAll("#ageGate [data-age]")) {
+  b.onclick = () => {
+    safeSet("ageChoice", b.dataset.age);
+    $("ageGate").close();
+    $("btnQuick").onclick();
+  };
+}
+$("btnAgeCancel").onclick = () => $("ageGate").close();
+
+$("btnCam").onclick = () => {
+  const me = state?.players.find((p) => p.id === myId);
+  send({ t: "cam", on: !me?.cam });
+};
+
+for (const b of document.querySelectorAll(".reportBtn")) b.onclick = () => $("reportDialog").showModal();
+$("btnReportCancel").onclick = () => $("reportDialog").close();
+$("btnReportSend").onclick = () => {
+  $("reportDialog").close();
+  // stop seeing and hearing them immediately, before the server even answers
+  closePeer();
+  if (state) renderTiles();
+  send({ t: "report", reason: $("reportReason").value });
 };
 $("btnCancelQuick").onclick = () => send({ t: "cancelQuick" });
 $("btnJoin").onclick = () => {

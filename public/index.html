@@ -29,7 +29,7 @@
         <input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off" />
         <button id="btnJoin" class="secondary">Join room</button>
       </div>
-      <p class="hint small">We'll ask for your camera and mic. Your camera is only shown to your opponent.</p>
+      <p class="hint small">We'll ask for your camera and mic. In random matches, cameras stay off unless both players turn them on.</p>
       <p id="homeError" class="error"></p>
     </section>
 
@@ -80,15 +80,20 @@
         <div class="tile" id="tile0">
           <video playsinline autoplay></video>
           <div class="noCam">🙂</div>
-          <div class="tileHead"><span class="pname"></span><span class="wins"></span></div>
+          <div class="tileHead"><span class="pname"></span><span class="wins"></span><button class="reportBtn small" hidden>🚩 Report</button></div>
           <div class="overlay"></div>
         </div>
         <div class="tile" id="tile1">
           <video playsinline autoplay></video>
           <div class="noCam">🙂</div>
-          <div class="tileHead"><span class="pname"></span><span class="wins"></span></div>
+          <div class="tileHead"><span class="pname"></span><span class="wins"></span><button class="reportBtn small" hidden>🚩 Report</button></div>
           <div class="overlay"></div>
         </div>
+      </div>
+
+      <div id="camConsent" class="camConsent hidden">
+        <p id="camText"></p>
+        <button id="btnCam" class="small"></button>
       </div>
 
       <div id="modePicker" class="modePicker hidden">
@@ -113,6 +118,33 @@
     </section>
 
     <p id="conn" class="conn"></p>
+    <footer class="legal"><a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></footer>
+
+    <dialog id="ageGate">
+      <h2>Random match</h2>
+      <p>You'll play a stranger. Cameras stay off unless you both turn them on, and only players 18 or older can turn theirs on. You can report anyone, any time.</p>
+      <div class="buttons">
+        <button data-age="adult">I'm 18 or older</button>
+        <button data-age="minor" class="secondary">I'm under 18 (audio only)</button>
+        <button id="btnAgeCancel" class="secondary">Cancel</button>
+      </div>
+      <p class="hint small">By playing you agree to the <a href="/terms.html">Terms</a>.</p>
+    </dialog>
+
+    <dialog id="reportDialog">
+      <h2>Report player</h2>
+      <p>This ends the match and hides their video right away. You won't be matched with them again.</p>
+      <select id="reportReason">
+        <option value="video">Inappropriate video</option>
+        <option value="harassment">Harassment or hate</option>
+        <option value="name">Offensive name</option>
+        <option value="other">Something else</option>
+      </select>
+      <div class="buttons">
+        <button id="btnReportSend">Report and leave</button>
+        <button id="btnReportCancel" class="secondary">Cancel</button>
+      </div>
+    </dialog>
   </main>
   <script type="module" src="/app.js"></script>
 </body>

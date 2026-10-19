@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy · Jjinja Battle</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main id="app" class="doc">
+    <p><a href="/">← Back to the game</a></p>
+    <h1>Privacy</h1>
+    <p class="hint">Last updated October 2026. Short version: no accounts, no stored recordings, no ads, no tracking cookies.</p>
+
+    <h2>What happens to your camera and mic</h2>
+    <ul>
+      <li><b>Live video and audio</b> go directly between you and your opponent (peer to peer). If a direct connection isn't possible, they pass through our relay server, which forwards them and never records them.</li>
+      <li><b>In random matches</b>, your video isn't sent at all until both players turn their cameras on.</li>
+      <li><b>Your jjinja clips</b> (a few seconds of audio) are analyzed in your browser, sent to the game server, and passed to your opponent so they can replay them. They exist only in memory during the match and are never saved.</li>
+      <li><b>The funniest-face snapshot</b> is a still frame taken from your camera while you record. It is shown to both players on the results screen and discarded when the room closes. Only you and your opponent see it, and either of you can save it.</li>
+    </ul>
+
+    <h2>What the server keeps</h2>
+    <ul>
+      <li>The name you type, while you're connected.</li>
+      <li>Your IP address, while you're connected, to limit abuse (rate limits).</li>
+      <li>If someone reports you, or you report someone: both IP addresses, both names, the reason, and the time. These go in the server logs for up to 30 days so repeat offenders can be blocked.</li>
+    </ul>
+
+    <h2>Your browser</h2>
+    <p>The game stores a few preferences in your browser (your name, practice best score, announcer on or off, and your age choice). They never leave your device. Clear your site data to remove them.</p>
+
+    <h2>Contact</h2>
+    <p>Questions or a problem with another player? Open an issue on the project's GitHub page.</p>
+  </main>
+</body>
+</html>
