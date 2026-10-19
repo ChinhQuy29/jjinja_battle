@@ -270,3 +270,15 @@ select {
   background: var(--bg); color: var(--ink); font-size: 1rem;
 }
 td small { color: var(--muted); }
+
+/* ---------- rally ---------- */
+
+.modePicker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.modePicker button { border: 2px solid transparent; }
+.modePicker button small { display: block; font-weight: 500; font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.modePicker button.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--track)); }
+.rallyCard { text-align: center; }
+.rallyCard .verdict { font-size: 1.6rem; line-height: 1; }
+.rallyCard .total { font-size: 2rem; }
+.rallyCard.ok { box-shadow: inset 0 0 0 2px rgba(25, 180, 107, 0.9); }
+.rallyCard.fail { box-shadow: inset 0 0 0 2px rgba(227, 38, 60, 0.95); }

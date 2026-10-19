@@ -3,6 +3,7 @@ import { startFaceCapture } from "./face.js";
 import { announce, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
 
 const MAX_RECORD_MS = 3000;
+const LONGER_RALLY_MAX_MS = 8000; // a 3s cap would make "longer" rallies unbeatable after one turn
 const ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
 const $ = (id) => document.getElementById(id);
 
@@ -184,9 +185,9 @@ function pickMime() {
   return options.find((m) => window.MediaRecorder?.isTypeSupported?.(m)) ?? "";
 }
 
-// Records mic audio for up to 3s. Tap again to stop early.
+// Records mic audio for up to maxMs (3s by default). Tap again to stop early.
 // Resolves with the audio Blob and a snapshot of the loudest (funniest) moment.
-async function record(button, meterEl) {
+async function record(button, meterEl, maxMs = MAX_RECORD_MS) {
   const stream = await getMedia();
   const audioOnly = new MediaStream(stream.getAudioTracks());
   return new Promise((resolve) => {
@@ -208,12 +209,12 @@ async function record(button, meterEl) {
     const started = performance.now();
     const stop = () => rec.state === "recording" && rec.stop();
     const tick = () => {
-      const pct = Math.min(100, ((performance.now() - started) / MAX_RECORD_MS) * 100);
+      const pct = Math.min(100, ((performance.now() - started) / maxMs) * 100);
       meterEl.style.width = pct + "%";
       if (pct < 100) raf = requestAnimationFrame(tick);
     };
     // a timer, not rAF, enforces the cap: rAF pauses in background tabs
-    const cap = setTimeout(stop, MAX_RECORD_MS);
+    const cap = setTimeout(stop, maxMs);
 
     hush(); // keep the announcer out of the recording
     face = startFaceCapture(stream);
@@ -249,6 +250,16 @@ function scoreCard(score, audioUrl = null, face = null) {
       ${bar(escapeHtml(score.label ?? "Tone"), score.tone)}
       ${bar("Funny", score.funny)}
       <p class="comment">“${escapeHtml(score.comment)}”</p>
+      ${audioUrl ? `<button class="small replay" data-src="${audioUrl}">▶ Replay</button>` : ""}
+    </div>`;
+}
+
+function rallyCard(result, audioUrl = null) {
+  return `
+    <div class="card pop rallyCard ${result.ok ? "ok" : "fail"}">
+      <div class="verdict">${result.ok ? "✅" : "❌"}</div>
+      <div class="total">${escapeHtml(result.display)}</div>
+      <p class="comment">${escapeHtml(result.comment)}</p>
       ${audioUrl ? `<button class="small replay" data-src="${audioUrl}">▶ Replay</button>` : ""}
     </div>`;
 }
@@ -348,7 +359,8 @@ let clipRound = 0;
 async function matchTurn(btn, meter) {
   try {
     send({ t: "rec", on: true });
-    const { blob, face } = await record(btn, meter);
+    const maxMs = state?.challenge?.id === "rally-longer" ? LONGER_RALLY_MAX_MS : MAX_RECORD_MS;
+    const { blob, face } = await record(btn, meter, maxMs);
     send({ t: "rec", on: false });
     btn.innerHTML = "⏳<small>judging</small>";
     btn.disabled = true;
@@ -385,15 +397,19 @@ function overlayFor(p) {
   if (s.phase === "over") {
     const sum = s.history.reduce((acc, r) => acc + (r.scores[p.id]?.total ?? 0), 0);
     const label = s.winner === "draw" ? "🤝 Draw" : s.winner === p.id ? "🏆 Winner" : "😵 Defeated";
-    return { key: `over-${s.winner}-${p.ready}`, html: badge(`${label}<small>${sum} pts total${p.ready ? " · wants a rematch" : ""}</small>`, s.winner === p.id ? "win big" : "big") };
+    const stat = s.mode === "rally" ? `${sum} jjinja${sum === 1 ? "" : "s"} landed` : `${sum} pts total`;
+    return { key: `over-${s.winner}-${p.ready}`, html: badge(`${label}<small>${stat}${p.ready ? " · wants a rematch" : ""}</small>`, s.winner === p.id ? "win big" : "big") };
   }
-  if (s.phase === "turn" && s.turnOf === p.id && !score) {
-    if (me) return { key: `myturn-${s.round}`, html: recordButtonHtml, arm: true };
+  // in a rally you take many turns per round, so an earlier result doesn't hide the record button
+  const turnKey = `${s.round}-${s.challenge?.hint ?? ""}`;
+  if (s.phase === "turn" && s.turnOf === p.id && (s.mode === "rally" || !score)) {
+    if (me) return { key: `myturn-${turnKey}`, html: recordButtonHtml, arm: true };
     return {
-      key: `oppturn-${s.round}-${oppRecording}`,
+      key: `oppturn-${turnKey}-${oppRecording}`,
       html: oppRecording ? badge("🔴 Recording…", "rec") : badge("🎤 Their turn…"),
     };
   }
+  if (score?.rally) return { key: `rally-${turnKey}-${score.display}-${score.ok}-${!!url}`, html: rallyCard(score, url) };
   if (score) return { key: `score-${s.round}-${score.total}-${score.comment}-${!!url}`, html: scoreCard(score, url) };
   return { key: `idle-${s.round}`, html: netNote };
 }
@@ -441,17 +457,23 @@ function renderRoom() {
   const inMatch = s.phase === "turn" || s.phase === "reveal";
   const me = s.players.find((p) => p.id === myId);
   $("lobbyPanel").classList.toggle("hidden", s.phase !== "lobby");
+  $("modePicker").classList.toggle("hidden", s.phase !== "lobby" && s.phase !== "over");
+  for (const b of document.querySelectorAll("#modePicker button")) b.classList.toggle("selected", b.dataset.mode === s.mode);
   $("overPanel").classList.toggle("hidden", s.phase !== "over");
 
   if (s.phase === "lobby") {
     $("lobbyText").textContent =
-      s.players.length < 2 ? "Share the invite link or room code with your friend." : "Both players press ready to start. Best of 3!";
+      s.players.length < 2
+        ? "Share the invite link or room code with your friend."
+        : s.mode === "rally"
+          ? "Rally: take turns, and each jjinja must beat the last one. First to fail loses. Best of 3 rallies!"
+          : "Both players press ready to start. Best of 3!";
     $("btnReady").disabled = s.players.length < 2;
     $("btnReady").textContent = me?.ready ? "Cancel ready" : "I'm ready";
   }
 
   document.querySelector(".status").classList.toggle("hidden", !inMatch);
-  $("roundLabel").textContent = inMatch ? `Round ${s.round}` : "";
+  $("roundLabel").textContent = inMatch ? `${s.mode === "rally" ? "Rally" : "Round"} ${s.round}` : "";
   const c = inMatch ? s.challenge : null;
   $("challengeLabel").innerHTML = c
     ? `<span class="cEmoji">${c.emoji}</span><span><b>${escapeHtml(c.title)}</b><small>${escapeHtml(c.hint)}</small></span>`
@@ -471,7 +493,8 @@ function renderRoom() {
     const rows = s.history
       .map((r) => `<tr><td>R${r.round} <small>${escapeHtml(r.challenge ?? "")}</small></td>${ids.map((id) => `<td class="${r.winner === id ? "won" : ""}">${r.scores[id]?.total ?? "-"}</td>`).join("")}</tr>`)
       .join("");
-    $("overTable").innerHTML = `<table><tr><th></th>${ids.map((id) => `<th>${escapeHtml(nameOf(id))}</th>`).join("")}</tr>${rows}</table>`;
+    const note = s.mode === "rally" ? `<p class="hint small">Numbers are jjinjas each player landed in that rally.</p>` : "";
+    $("overTable").innerHTML = note + `<table><tr><th></th>${ids.map((id) => `<th>${escapeHtml(nameOf(id))}</th>`).join("")}</tr>${rows}</table>`;
     $("btnRematch").textContent = me?.ready ? "Waiting for opponent…" : "Rematch";
     renderFaces(s);
   }
@@ -528,6 +551,12 @@ function announceTransition(prev, next) {
     if (!newTurn) return;
     const who = next.turnOf === myId ? "Your turn!" : `${name(next.turnOf)}'s turn.`;
     const newRound = !prev || prev.round !== next.round || prev.phase === "lobby" || prev.phase === "over";
+    if (next.mode === "rally") {
+      // mid-rally turns move fast; the "Higher!"/"Longer!" call already cued the next player
+      if (!newRound) return;
+      const verb = next.challenge?.title.split(" ").pop().toLowerCase() ?? "";
+      return announce(`Rally ${next.round}! Go ${verb}! ${next.turnOf === myId ? "You start!" : `${name(next.turnOf)} starts.`}`);
+    }
     const twist = next.challenge && next.challenge.id !== "classic" ? ` ${next.challenge.title}!` : "";
     announce(newRound ? `${roundLine(next.round, next.players.map((p) => p.wins))}${twist} ${who}` : who);
   } else if (next.phase === "over" && prev?.phase !== "over") {
@@ -580,7 +609,7 @@ function onMessage(m) {
     case "clip": {
       const url = m.audio ? `data:${m.mime || "audio/webm"};base64,${m.audio}` : null;
       if (url) clipUrls[m.from] = url;
-      announce(scoreLine(m.score));
+      announce(m.score.say ?? scoreLine(m.score));
       // you already heard it live over the video call; play it only if the call isn't connected
       if (url && m.from !== myId && pc?.connectionState !== "connected") new Audio(url).play().catch(() => {});
       renderRoom();
@@ -650,6 +679,7 @@ $("btnJoin").onclick = () => {
   send({ t: "join", code: $("joinCode").value.trim().toUpperCase() });
 };
 $("btnReady").onclick = () => send({ t: "ready" });
+for (const b of document.querySelectorAll("#modePicker button")) b.onclick = () => send({ t: "mode", mode: b.dataset.mode });
 $("btnRematch").onclick = () => send({ t: "ready" });
 $("btnLeave").onclick = () => {
   send({ t: "leave" });

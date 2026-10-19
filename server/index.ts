@@ -6,10 +6,13 @@ import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { grade, sanitize, timeoutScore, type Score } from "./scoring.js";
 import { CHALLENGES, pickChallenge, publicInfo, type Challenge } from "./challenges.js";
+import { hintFor, pickAxis, playRally, type Axis, type RallyResult } from "./rally.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_DIR = fileURLToPath(new URL("../public", import.meta.url));
 const TURN_MS = 15_000;
+const RALLY_TURN_MS = 10_000; // rallies are meant to be quick
+const MAX_RALLY_EXCHANGES = 20; // safety cap; a rally that long is a draw
 const WINS_NEEDED = 2; // best of 3
 const MAX_ROUNDS = 5; // ties extend the match a little
 const MAX_AUDIO_BYTES = 400_000;
@@ -51,8 +54,17 @@ interface Player {
 interface RoundResult {
   round: number;
   challenge: string;
-  scores: Record<string, Score>;
+  scores: Record<string, { total: number }>; // classic: round score; rally: successful jjinjas
   winner: string | null;
+}
+
+type Mode = "classic" | "rally";
+
+interface Rally {
+  axis: Axis;
+  target: number | null; // value the next jjinja must beat
+  exchanges: number;
+  successes: Record<string, number>;
 }
 
 type Phase = "lobby" | "turn" | "reveal" | "over";
@@ -62,6 +74,8 @@ interface Room {
   players: Player[];
   ready: Set<string>;
   phase: Phase;
+  mode: Mode;
+  rally: Rally | null;
   round: number;
   order: string[]; // turn order for the current round
   turnIdx: number;
@@ -69,7 +83,7 @@ interface Room {
   deadline: number;
   wins: Record<string, number>;
   history: RoundResult[];
-  current: Record<string, Score>;
+  current: Record<string, Score | RallyResult>;
   challenge: Challenge; // this round's twist
   usedChallenges: string[];
   winner: string | null; // player id, "draw", or null
@@ -103,6 +117,8 @@ function createRoom(): Room {
     players: [],
     ready: new Set(),
     phase: "lobby",
+    mode: "classic",
+    rally: null,
     round: 0,
     order: [],
     turnIdx: 0,
@@ -127,9 +143,10 @@ function pushState(room: Room) {
     t: "state",
     code: room.code,
     phase: room.phase,
+    mode: room.mode,
     players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0 })),
     round: room.round,
-    challenge: room.phase === "turn" || room.phase === "reveal" ? publicInfo(room.challenge) : null,
+    challenge: room.phase === "turn" || room.phase === "reveal" ? roundInfo(room) : null,
     turnOf: room.turnOf,
     deadline: room.deadline,
     now: Date.now(),
@@ -139,6 +156,13 @@ function pushState(room: Room) {
     faces: room.phase === "over" ? room.faces : undefined, // images are large; only send for the results screen
     notice: room.notice,
   });
+}
+
+// what the banner shows: the round's challenge, or the rally's axis and current target
+function roundInfo(room: Room) {
+  if (room.mode !== "rally" || !room.rally) return publicInfo(room.challenge);
+  const { axis, target } = room.rally;
+  return { id: `rally-${axis.id}`, emoji: axis.emoji, title: axis.title, hint: hintFor(axis, target) };
 }
 
 function clearTimer(room: Room) {
@@ -182,6 +206,7 @@ function resetToLobby(room: Room) {
   room.history = [];
   room.current = {};
   room.usedChallenges = [];
+  room.rally = null;
   room.winner = null;
   room.faces = {};
 }
@@ -197,8 +222,12 @@ function startMatch(room: Room) {
 function startRound(room: Room) {
   room.round += 1;
   room.current = {};
-  room.challenge = pickChallenge(room.usedChallenges);
-  room.usedChallenges.push(room.challenge.id);
+  if (room.mode === "rally") {
+    room.rally = { axis: pickAxis(), target: null, exchanges: 0, successes: {} };
+  } else {
+    room.challenge = pickChallenge(room.usedChallenges);
+    room.usedChallenges.push(room.challenge.id);
+  }
   const ids = room.players.map((p) => p.id);
   // alternate who goes first each round
   room.order = room.round % 2 === 1 ? ids : [...ids].reverse();
@@ -210,8 +239,10 @@ function startTurn(room: Room) {
   clearTimer(room);
   room.phase = "turn";
   room.turnOf = room.order[room.turnIdx];
-  room.deadline = Date.now() + TURN_MS;
-  room.timer = setTimeout(() => submit(room, room.turnOf!, null), TURN_MS + 1500);
+  // "longer" rallies allow 8s recordings, so they need extra time per turn
+  const turnMs = room.mode === "rally" ? RALLY_TURN_MS + (room.rally?.axis.id === "longer" ? 6000 : 0) : TURN_MS;
+  room.deadline = Date.now() + turnMs;
+  room.timer = setTimeout(() => submit(room, room.turnOf!, null), turnMs + 1500);
   pushState(room);
 }
 
@@ -220,13 +251,11 @@ function submit(room: Room, playerId: string, payload: { features: unknown; audi
   clearTimer(room);
 
   const features = payload ? sanitize(payload.features) : null;
+  if (room.mode === "rally") return submitRally(room, playerId, payload, features);
   const score = features ? grade(features, room.challenge.id) : timeoutScore(room.challenge.id);
   room.current[playerId] = score;
   room.phase = "reveal";
-  const best = room.faces[playerId];
-  if (payload?.face && (!best || score.funny > best.funny)) {
-    room.faces[playerId] = { image: payload.face, funny: score.funny, round: room.round };
-  }
+  keepFace(room, playerId, payload?.face, score.funny);
 
   broadcast(room, { t: "clip", from: playerId, audio: payload?.audio ?? null, mime: payload?.mime ?? null, score });
   pushState(room);
@@ -236,16 +265,52 @@ function submit(room: Room, playerId: string, payload: { features: unknown; audi
   room.timer = setTimeout(() => afterReveal(room), revealMs);
 }
 
+function keepFace(room: Room, playerId: string, face: string | undefined, funny: number) {
+  const best = room.faces[playerId];
+  if (face && (!best || funny > best.funny)) room.faces[playerId] = { image: face, funny, round: room.round };
+}
+
+function submitRally(room: Room, playerId: string, payload: { audio?: string; mime?: string; face?: string } | null, features: ReturnType<typeof sanitize> | null) {
+  const rally = room.rally!;
+  const result = playRally(rally.axis, rally.target, features);
+  room.current[playerId] = result;
+  room.phase = "reveal";
+  if (result.ok) {
+    rally.target = result.value;
+    rally.exchanges += 1;
+    rally.successes[playerId] = (rally.successes[playerId] ?? 0) + 1;
+  }
+  if (features) keepFace(room, playerId, payload?.face, grade(features).funny);
+
+  broadcast(room, { t: "clip", from: playerId, audio: payload?.audio ?? null, mime: payload?.mime ?? null, score: result });
+  pushState(room);
+
+  // keep it snappy on success, linger a bit on the decisive fail
+  room.timer = setTimeout(() => {
+    if (result.ok && rally.exchanges < MAX_RALLY_EXCHANGES) {
+      room.turnIdx = 1 - room.turnIdx;
+      return startTurn(room);
+    }
+    const winner = result.ok ? null : room.order.find((id) => id !== playerId) ?? null;
+    const scores = Object.fromEntries(room.order.map((id) => [id, { total: rally.successes[id] ?? 0 }]));
+    finishRound(room, winner, `${rally.axis.emoji} ${rally.axis.title}`, scores);
+  }, result.ok ? 1500 : 3000);
+}
+
 function afterReveal(room: Room) {
   room.turnIdx += 1;
   if (room.turnIdx < room.order.length) return startTurn(room);
 
+  const total = (id: string) => (room.current[id] as Score | undefined)?.total ?? 0;
   const [a, b] = room.order;
-  const sa = room.current[a]?.total ?? 0;
-  const sb = room.current[b]?.total ?? 0;
-  const winner = sa === sb ? null : sa > sb ? a : b;
+  const winner = total(a) === total(b) ? null : total(a) > total(b) ? a : b;
+  const scores = Object.fromEntries(room.order.map((id) => [id, { total: total(id) }]));
+  finishRound(room, winner, `${room.challenge.emoji} ${room.challenge.title}`, scores);
+}
+
+function finishRound(room: Room, winner: string | null, label: string, scores: RoundResult["scores"]) {
   if (winner) room.wins[winner] = (room.wins[winner] ?? 0) + 1;
-  room.history.push({ round: room.round, challenge: `${room.challenge.emoji} ${room.challenge.title}`, scores: room.current, winner });
+  room.history.push({ round: room.round, challenge: label, scores, winner });
 
   const champ = room.players.find((p) => (room.wins[p.id] ?? 0) >= WINS_NEEDED);
   if (champ || room.round >= MAX_ROUNDS) {
@@ -337,6 +402,14 @@ wss.on("connection", (ws) => {
       case "leave":
         leaveRoom(p);
         break;
+      case "mode": {
+        const room = p.room;
+        if (!room || (room.phase !== "lobby" && room.phase !== "over")) return;
+        room.mode = msg.mode === "rally" ? "rally" : "classic";
+        room.ready.clear();
+        pushState(room);
+        break;
+      }
       case "ready": {
         const room = p.room;
         if (!room || (room.phase !== "lobby" && room.phase !== "over")) return;
