@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jjinja Battle</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main id="app">
+    <header>
+      <h1>JJINJA<span>?!</span> Battle</h1>
+      <p class="tag">Say "jjinja" (찐짜). Get judged. Destroy your friends.</p>
+    </header>
+
+    <!-- home -->
+    <section id="home" class="screen">
+      <label class="field">
+        <span>Your name</span>
+        <input id="name" maxlength="20" placeholder="Jjinja Master" autocomplete="off" />
+      </label>
+      <div class="buttons">
+        <button id="btnPractice" class="secondary">🎤 Practice</button>
+        <button id="btnCreate">⚔️ Invite a friend</button>
+        <button id="btnQuick">🎲 Random match</button>
+      </div>
+      <div class="join">
+        <input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off" />
+        <button id="btnJoin" class="secondary">Join room</button>
+      </div>
+      <p class="hint small">We'll ask for your camera and mic. Your camera is only shown to your opponent.</p>
+      <p id="homeError" class="error"></p>
+    </section>
+
+    <!-- queue -->
+    <section id="queue" class="screen hidden">
+      <div class="spinner"></div>
+      <p>Looking for an opponent…</p>
+      <p class="hint">Tip: open this site in another tab or send it to a friend to test.</p>
+      <button id="btnCancelQuick" class="secondary">Cancel</button>
+    </section>
+
+    <!-- practice -->
+    <section id="practice" class="screen hidden">
+      <h2>Practice room</h2>
+      <p class="hint">Go for the meme: a sharp "JJIN", then a long, rising "JAAA?"</p>
+      <div class="stage solo">
+        <div class="tile" id="practiceTile">
+          <video playsinline autoplay muted class="mirror"></video>
+          <div class="noCam">🙂</div>
+          <div class="tileHead"><span class="pname">You</span><span>Best: <b id="practiceBest">—</b></span></div>
+          <div class="overlay"></div>
+        </div>
+      </div>
+      <p id="practiceError" class="error"></p>
+      <button id="btnPracticeBack" class="secondary">← Back</button>
+    </section>
+
+    <!-- room -->
+    <section id="room" class="screen wide hidden">
+      <div class="roomHead">
+        <div>Room <b id="roomCode"></b></div>
+        <button id="btnCopy" class="small secondary">Copy invite link</button>
+      </div>
+      <p id="roomNotice" class="notice"></p>
+
+      <div class="status">
+        <p class="round" id="roundLabel"></p>
+        <p class="turn" id="turnLabel"></p>
+        <div class="timer"><div id="timerBar"></div></div>
+      </div>
+
+      <div class="stage">
+        <div class="tile" id="tile0">
+          <video playsinline autoplay></video>
+          <div class="noCam">🙂</div>
+          <div class="tileHead"><span class="pname"></span><span class="wins"></span></div>
+          <div class="overlay"></div>
+        </div>
+        <div class="tile" id="tile1">
+          <video playsinline autoplay></video>
+          <div class="noCam">🙂</div>
+          <div class="tileHead"><span class="pname"></span><span class="wins"></span></div>
+          <div class="overlay"></div>
+        </div>
+      </div>
+
+      <div id="lobbyPanel">
+        <p id="lobbyText"></p>
+        <button id="btnReady">I'm ready</button>
+      </div>
+
+      <div id="overPanel" class="hidden">
+        <h2 id="overTitle"></h2>
+        <div id="overTable"></div>
+        <button id="btnRematch">Rematch</button>
+      </div>
+
+      <p id="mediaError" class="error"></p>
+      <button id="btnLeave" class="secondary">Leave room</button>
+    </section>
+
+    <p id="conn" class="conn"></p>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
