@@ -167,7 +167,7 @@ EOF
 systemctl restart systemd-journald
 
 step "Configuring the firewall"
-ufw allow OpenSSH
+ufw allow 22/tcp # SSH; by port, since the "OpenSSH" profile only exists if openssh-server is installed
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow 443/udp
