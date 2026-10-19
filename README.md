@@ -35,7 +35,7 @@ It prints a link like `https://something-random.trycloudflare.com`. Both of you 
 
 ## Put it online
 
-See [DEPLOY.md](DEPLOY.md): a ~$5/month VPS, a free DuckDNS subdomain, automatic HTTPS, and a video relay, set up with one script.
+See [DEPLOY.md](DEPLOY.md): free on Oracle Cloud Always Free (or a ~$5/month VPS), a free DuckDNS subdomain, automatic HTTPS, and a video relay, set up with one script.
 
 ## Layout
 

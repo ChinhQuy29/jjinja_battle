@@ -6,6 +6,8 @@
 #
 # Installs Node.js, Caddy (automatic HTTPS), and coturn (video relay), clones the game,
 # and runs it as a service that restarts on crashes and reboots. Safe to re-run.
+# Works on regular VPSes and on Oracle Cloud (Always Free), whose Ubuntu images
+# ship their own iptables firewall and sit behind NAT.
 set -euo pipefail
 
 DOMAIN="${1:-}"
@@ -27,11 +29,21 @@ fi
 
 step() { echo; echo "==> $*"; }
 
+# Oracle Cloud's Ubuntu images block every port except SSH with iptables rules saved in
+# /etc/iptables/rules.v4. Installing ufw there would remove iptables-persistent and fight
+# those rules, so on such servers we open ports in iptables instead.
+ORACLE_FIREWALL=0
+if [[ -f /etc/iptables/rules.v4 ]] && grep -q -- "-j REJECT" /etc/iptables/rules.v4; then
+  ORACLE_FIREWALL=1
+fi
+
 step "Updating the system"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y curl git ufw ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https unattended-upgrades
+apt-get install -y curl git ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https unattended-upgrades
+
+[[ $ORACLE_FIREWALL == 1 ]] || apt-get install -y ufw
 
 step "Turning on automatic security updates"
 dpkg-reconfigure -f noninteractive unattended-upgrades
@@ -130,8 +142,18 @@ $DOMAIN {
 }
 EOF
 
+# Behind NAT (e.g. Oracle Cloud) the server only sees its private IP, so tell coturn the
+# public one, or relayed video would point players at an unreachable private address.
+PRIVATE_IP="$(hostname -I | awk '{print $1}')"
+PUBLIC_IP="$(curl -fsS4 --max-time 5 https://checkip.amazonaws.com | tr -d '[:space:]' || true)"
+EXTERNAL_IP_LINE=""
+if [[ -n "$PUBLIC_IP" && -n "$PRIVATE_IP" && "$PUBLIC_IP" != "$PRIVATE_IP" ]]; then
+  EXTERNAL_IP_LINE="external-ip=$PUBLIC_IP/$PRIVATE_IP"
+fi
+
 cat > /etc/turnserver.conf <<EOF
 listening-port=3478
+$EXTERNAL_IP_LINE
 realm=$DOMAIN
 fingerprint
 use-auth-secret
@@ -167,14 +189,26 @@ EOF
 systemctl restart systemd-journald
 
 step "Configuring the firewall"
-ufw allow 22/tcp # SSH; by port, since the "OpenSSH" profile only exists if openssh-server is installed
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 443/udp
-ufw allow 3478/tcp
-ufw allow 3478/udp
-ufw allow $TURN_MIN_PORT:$TURN_MAX_PORT/udp
-ufw --force enable
+OPEN_PORTS=("tcp 80" "tcp 443" "udp 443" "tcp 3478" "udp 3478" "udp $TURN_MIN_PORT:$TURN_MAX_PORT")
+if [[ $ORACLE_FIREWALL == 1 ]]; then
+  # insert ACCEPT rules just above Oracle's catch-all REJECT, then save them for reboots
+  for rule in "${OPEN_PORTS[@]}"; do
+    read -r proto port <<< "$rule"
+    if ! iptables -C INPUT -p "$proto" -m state --state NEW -m "$proto" --dport "$port" -j ACCEPT 2>/dev/null; then
+      reject_line="$(iptables -L INPUT --line-numbers -n | awk '$2 == "REJECT" {print $1; exit}')"
+      iptables -I INPUT "${reject_line:-1}" -p "$proto" -m state --state NEW -m "$proto" --dport "$port" -j ACCEPT
+    fi
+  done
+  netfilter-persistent save
+  echo "Opened ports in the server's iptables firewall. Also open them in Oracle's Security List (see DEPLOY.md)."
+else
+  ufw allow 22/tcp # SSH; by port, since the "OpenSSH" profile only exists if openssh-server is installed
+  for rule in "${OPEN_PORTS[@]}"; do
+    read -r proto port <<< "$rule"
+    ufw allow "$port/$proto"
+  done
+  ufw --force enable
+fi
 
 step "Starting everything"
 systemctl daemon-reload
