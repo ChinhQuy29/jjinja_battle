@@ -88,6 +88,7 @@
       </div>
 
       <div class="hud hudTopRight">
+        <button id="btnFilm" class="small secondary" title="Record this match as a vertical video">⏺<span class="lbl"> Rec</span></button>
         <button id="btnClean" class="small secondary" title="Hide the overlay for a clean view">👁</button>
         <button id="btnFullscreen" class="small secondary" title="Full screen">⛶</button>
         <button id="btnLeave" class="small secondary" title="Leave room">✕<span class="lbl"> Leave</span></button>
@@ -117,12 +118,15 @@
             <h2 id="overTitle"></h2>
             <div id="overTable"></div>
             <div id="overFaces"></div>
+            <div id="overSaves" class="saves"></div>
             <button id="btnRematch">Rematch</button>
           </div>
 
           <p id="mediaError" class="error"></p>
         </div>
       </div>
+
+      <div id="recBadge" class="hud hudBottomLeft recBadge hidden"></div>
 
       <div id="camConsent" class="hud hudBottom camConsent hidden">
         <p id="camText"></p>

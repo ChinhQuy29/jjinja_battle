@@ -32,8 +32,16 @@ export function setMuted(value) {
   if (muted) synth?.cancel();
 }
 
+let speakListener = null;
+// Called with every line the announcer or the bot says, e.g. to caption match recordings
+// (browsers can't record speech-synthesis audio).
+export function onSpeak(fn) {
+  speakListener = fn;
+}
+
 // Speaks a line, cutting off whatever the announcer was saying before.
 export function announce(text) {
+  if (text) speakListener?.(text);
   if (!synth || muted || !text) return;
   synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -53,10 +61,13 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // The bot's own "jjinja": a Korean voice says 진짜 properly when the device has one.
 export function botSpeak() {
-  if (!synth || muted) return;
+  if (!synth) return;
+  if (muted) return speakListener?.("🤖 jjinja?");
   synth.cancel();
   const korean = (synth.getVoices() ?? []).find((v) => v.lang?.toLowerCase().startsWith("ko"));
-  const u = new SpeechSynthesisUtterance(korean ? pick(["진짜?", "진짜아아?", "찐짜?!"]) : pick(["jjinja?", "jjinjaaa?", "jjin-JAAA?!"]));
+  const line = korean ? pick(["진짜?", "진짜아아?", "찐짜?!"]) : pick(["jjinja?", "jjinjaaa?", "jjin-JAAA?!"]);
+  speakListener?.(`🤖 ${line}`);
+  const u = new SpeechSynthesisUtterance(line);
   if (korean) u.voice = korean;
   else if (voice) u.voice = voice;
   u.pitch = 0.9 + Math.random() * 1.1;

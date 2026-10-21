@@ -427,3 +427,17 @@ body.arena #mediaError { order: 3; }
 @media (max-width: 600px) {
   body.arena .lbl { display: none; } /* icon-only controls so the top row fits on phones */
 }
+
+/* ---------- match recording ---------- */
+
+#btnFilm.on { background: rgba(227, 38, 60, 0.85) !important; color: #fff; }
+body.arena .hudBottomLeft { bottom: 14px; left: 14px; margin: 0; font-size: 0.85rem; font-weight: 700; }
+.recBadge { animation: recBlink 1.4s ease-in-out infinite; }
+@keyframes recBlink { 50% { opacity: 0.55; } }
+.saves { margin: 4px 0 10px; }
+.saveBtn {
+  display: inline-block; padding: 10px 16px; border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
+  font-weight: 800; text-decoration: none;
+}
+body.arena.clean .recBadge { opacity: 0.6; } /* stays visible in clean view: never hide that someone is recording */

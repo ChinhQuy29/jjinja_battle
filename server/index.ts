@@ -59,6 +59,7 @@ interface Player {
   ip: string;
   adult: boolean; // confirmed 18+, required to turn the camera on in random matches
   cam: boolean; // consented to show their camera in a random match
+  film: boolean; // recording this match (random matches need both players to agree)
   ws: WebSocket | null; // null for the bot
   bot: boolean;
   room: Room | null;
@@ -161,7 +162,7 @@ function pushState(room: Room) {
     phase: room.phase,
     kind: room.kind,
     mode: room.mode,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0, cam: p.cam, bot: p.bot })),
+    players: room.players.map((p) => ({ id: p.id, name: p.name, ready: room.ready.has(p.id), wins: room.wins[p.id] ?? 0, cam: p.cam, film: p.film, bot: p.bot })),
     round: room.round,
     challenge: room.phase === "turn" || room.phase === "reveal" ? roundInfo(room) : null,
     turnOf: room.turnOf,
@@ -192,6 +193,7 @@ function joinRoom(p: Player, room: Room) {
   room.players.push(p);
   p.room = room;
   p.cam = false;
+  p.film = false;
   room.notice = null;
   pushState(room);
 }
@@ -297,7 +299,7 @@ function botTurn(room: Room, bot: Player) {
 function startBotMatch(p: Player) {
   const room = createRoom("bot");
   joinRoom(p, room);
-  const bot: Player = { id: randomUUID(), name: BOT_NAME, ip: "bot", adult: false, cam: false, ws: null, bot: true, room, queued: false };
+  const bot: Player = { id: randomUUID(), name: BOT_NAME, ip: "bot", adult: false, cam: false, film: false, ws: null, bot: true, room, queued: false };
   room.players.push(bot);
   startMatch(room);
 }
@@ -429,7 +431,7 @@ wss.on("connection", (ws, req) => {
   const ip = clientIp(req);
   if (!openConnection(ip)) return ws.close(1013, "Too many connections");
   const budget = new MessageBudget();
-  const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, ws, bot: false, room: null, queued: false };
+  const p: Player = { id: randomUUID(), name: "Guest", ip, adult: false, cam: false, film: false, ws, bot: false, room: null, queued: false };
   send(p, { t: "welcome", id: p.id, challenges: CHALLENGES.map(publicInfo), iceServers: iceServers(p.id) });
 
   ws.on("message", (data) => {
@@ -524,6 +526,12 @@ wss.on("connection", (ws, req) => {
         // "rec" tells the opponent we started/stopped recording
         const other = p.room?.players.find((x) => x !== p);
         if (other) send(other, { t: msg.t, from: p.id, data: msg.data, on: !!msg.on });
+        break;
+      }
+      case "film": {
+        if (!p.room) return;
+        p.film = msg.on === true;
+        pushState(p.room);
         break;
       }
       case "cam": {

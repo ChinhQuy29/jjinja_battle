@@ -1,6 +1,7 @@
 import { analyze } from "./features.js";
 import { startFaceCapture } from "./face.js";
-import { announce, botSpeak, hush, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
+import { MatchRecorder, fileExtension, recordingSupported } from "./recorder.js";
+import { announce, botSpeak, hush, onSpeak, isMuted, roundLine, scoreLine, setMuted } from "./announcer.js";
 
 const MAX_RECORD_MS = 3000;
 const LONGER_RALLY_MAX_MS = 8000; // a 3s cap would make "longer" rallies unbeatable after one turn
@@ -543,6 +544,7 @@ function renderRoom() {
 
   renderCamConsent();
   applyVideoConsent();
+  syncFilming();
   renderTiles();
 }
 
@@ -570,6 +572,170 @@ function renderCamConsent() {
         ? `${opp.name} wants cameras on. Video shows only if you both agree.`
         : "Cameras are off in random matches. Video shows only if you both turn them on.";
 }
+
+// ---------- match recording (vertical video) ----------
+
+let matchRec = null; // MatchRecorder: draws the vertical scene and mixes audio
+let fullRec = null; // recording of the whole match
+let finishTimer = null;
+let savedVideo = null; // { url, ext, kind }
+let caption = { text: "", until: 0 };
+
+onSpeak((line) => (caption = { text: line, until: Date.now() + 2600 }));
+
+function wantsToFilm() {
+  return safeGet("autoFilm") !== "0";
+}
+
+function onEnterRoom(s) {
+  discardRecording();
+  // invite and bot matches record by default (both players see the REC badge);
+  // random matches only record when both players turn it on
+  if (recordingSupported() && s.kind !== "random" && wantsToFilm()) send({ t: "film", on: true });
+}
+
+// Who is recording right now. In random rooms nobody records unless both agreed.
+function filmers() {
+  const s = state;
+  if (!s) return [];
+  const humans = s.players.filter((p) => !p.bot);
+  if (s.kind === "random") return humans.length === 2 && humans.every((p) => p.film) ? humans : [];
+  return humans.filter((p) => p.film);
+}
+
+function iAmFilming() {
+  return filmers().some((p) => p.id === myId);
+}
+
+function syncFilming() {
+  const s = state;
+  const me = s.players.find((p) => p.id === myId);
+  const btn = $("btnFilm");
+  btn.hidden = !recordingSupported();
+  btn.classList.toggle("on", !!me?.film);
+
+  const who = filmers();
+  const badge = $("recBadge");
+  badge.classList.toggle("hidden", !who.length);
+  if (who.length) {
+    const names = who.map((p) => (p.id === myId ? "You" : p.name));
+    badge.textContent = `🔴 REC · ${names.join(" & ")} ${names.length === 1 && names[0] !== "You" ? "is" : "are"} recording`;
+  } else if (s.kind === "random") {
+    const opp = s.players.find((p) => p.id !== myId && !p.bot);
+    if (me?.film) {
+      badge.classList.remove("hidden");
+      badge.textContent = "⏺ Waiting for your opponent to agree to recording";
+    } else if (opp?.film) {
+      badge.classList.remove("hidden");
+      badge.textContent = `⏺ ${opp.name} wants to record this match. Tap ⏺ to agree.`;
+    }
+  }
+
+  const playing = s.phase === "turn" || s.phase === "reveal";
+  if (playing && iAmFilming() && !fullRec) startRecording();
+  if (fullRec && !iAmFilming()) finishRecording(); // consent withdrawn: keep what was agreed to
+  if (s.phase === "over" && fullRec && !finishTimer) finishTimer = setTimeout(finishRecording, 4000); // catch the winner banner
+  if (matchRec) {
+    if (localStream) matchRec.addAudio(localStream);
+    if (remoteStream) matchRec.addAudio(remoteStream);
+  }
+  renderSaves();
+}
+
+function startRecording() {
+  if (savedVideo) URL.revokeObjectURL(savedVideo.url);
+  savedVideo = null;
+  matchRec = new MatchRecorder(recordingScene);
+  if (localStream) matchRec.addAudio(localStream);
+  if (remoteStream) matchRec.addAudio(remoteStream);
+  matchRec.start();
+  fullRec = matchRec.record();
+}
+
+async function finishRecording() {
+  clearTimeout(finishTimer);
+  finishTimer = null;
+  const rec = fullRec;
+  const recorder = matchRec;
+  fullRec = null;
+  matchRec = null;
+  if (!rec) return;
+  renderSaves(true);
+  const blob = await rec.stop();
+  recorder.dispose();
+  if (blob.size > 0) savedVideo = { url: URL.createObjectURL(blob), ext: fileExtension(blob.type) };
+  renderSaves();
+}
+
+function discardRecording() {
+  clearTimeout(finishTimer);
+  finishTimer = null;
+  matchRec?.dispose();
+  matchRec = null;
+  fullRec = null;
+  if (savedVideo) URL.revokeObjectURL(savedVideo.url);
+  savedVideo = null;
+}
+
+function renderSaves(preparing = false) {
+  const el = $("overSaves");
+  if (!el) return;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  if (preparing || (state?.phase === "over" && fullRec)) {
+    el.innerHTML = `<span class="hint small">🎬 Preparing your video…</span>`;
+  } else if (savedVideo) {
+    el.innerHTML = `<a class="saveBtn" href="${savedVideo.url}" download="jjinja-battle-${stamp}.${savedVideo.ext}">🎬 Save match video</a>`;
+  } else {
+    el.innerHTML = "";
+  }
+}
+
+// What the vertical video shows at this moment.
+function recordingScene() {
+  const s = state;
+  if (!s) return null;
+  const playing = s.phase === "turn" || s.phase === "reveal";
+  const myRecLive = !!document.querySelector(".tile.me .recBtn.live");
+  const players = s.players.slice(0, 2).map((p, i) => {
+    const tile = $(`tile${i}`);
+    const video = tile.classList.contains("camOff") ? null : tile.querySelector("video");
+    const score = s.current?.[p.id] ?? null;
+    const upNow = s.phase === "turn" && s.turnOf === p.id;
+    const live = p.id === myId ? myRecLive : oppRecording;
+    const waiting = upNow && (!score || s.mode === "rally");
+    return {
+      name: p.name,
+      wins: p.wins,
+      bot: p.bot,
+      video,
+      active: upNow,
+      status: waiting ? (live ? "🔴 Jjinja-ing…" : "🎤 Up next") : null,
+      score: waiting ? null : playing || s.phase === "over" ? score : null,
+    };
+  });
+  let winner = null;
+  let winnerSub = null;
+  if (s.phase === "over") {
+    winner = s.winner === "draw" ? "🤝 It's a draw!" : `🏆 ${nameOf(s.winner)} wins!`;
+    winnerSub = s.players.map((p) => `${p.name} ${p.wins}`).join("  –  ");
+  }
+  return {
+    players,
+    round: playing ? `${s.mode === "rally" ? "Rally" : "Round"} ${s.round}` : null,
+    challenge: playing ? s.challenge : null,
+    caption: Date.now() < caption.until ? caption.text : null,
+    winner,
+    winnerSub,
+    watermark: `JJINJA?! Battle · ${location.host}`,
+  };
+}
+
+$("btnFilm").onclick = () => {
+  const me = state?.players.find((p) => p.id === myId);
+  const on = !me?.film;
+  if (state?.kind !== "random") safeSet("autoFilm", on ? "1" : "0");
+  send({ t: "film", on });
+};
 
 function renderFaces(s) {
   const faces = s.faces ?? {};
@@ -673,6 +839,7 @@ function onMessage(m) {
     case "state":
       if (m.turnOf !== state?.turnOf || m.phase !== "turn") oppRecording = false;
       announceTransition(state, m);
+      if (m.code !== state?.code) onEnterRoom(m);
       state = m;
       history.replaceState(null, "", `/r/${m.code}`);
       syncPeer();
@@ -810,6 +977,7 @@ $("btnReady").onclick = () => send({ t: "ready" });
 for (const b of document.querySelectorAll("#modePicker button")) b.onclick = () => send({ t: "mode", mode: b.dataset.mode });
 $("btnRematch").onclick = () => send({ t: "ready" });
 $("btnLeave").onclick = () => {
+  discardRecording();
   send({ t: "leave" });
   state = null;
   closePeer();
