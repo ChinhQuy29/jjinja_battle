@@ -578,10 +578,39 @@ function renderCamConsent() {
 let matchRec = null; // MatchRecorder: draws the vertical scene and mixes audio
 let fullRec = null; // recording of the whole match
 let finishTimer = null;
-let savedVideo = null; // { url, ext, kind }
+let savedVideo = null; // { url, ext }
 let caption = { text: "", until: 0 };
 
-onSpeak((line) => (caption = { text: line, until: Date.now() + 2600 }));
+// The auto-highlight is a second recording of the same scene that is paused except during
+// the good moments, so it comes out as one short continuous clip with no editing needed.
+let hlRec = null;
+let hlTick = null;
+let hlUntil = 0; // keep rolling at least until this time
+let hlSince = 0; // when the current rolling stretch started
+let hlMs = 0; // total length so far
+let savedHighlight = null; // { url, ext, seconds }
+
+function keepHighlight(ms) {
+  if (hlRec) hlUntil = Math.max(hlUntil, Date.now() + ms);
+}
+
+function updateHighlight() {
+  if (!hlRec) return;
+  const someoneSaying = !!document.querySelector(".tile.me .recBtn.live") || oppRecording;
+  const roll = someoneSaying || Date.now() < hlUntil;
+  if (roll && hlRec.rec.state === "paused") {
+    hlRec.resume();
+    hlSince = Date.now();
+  } else if (!roll && hlRec.rec.state === "recording") {
+    hlRec.pause();
+    hlMs += Date.now() - hlSince;
+  }
+}
+
+onSpeak((line) => {
+  caption = { text: line, until: Date.now() + 2600 };
+  if (line.startsWith("🤖")) keepHighlight(2200); // the bot's jjinja is a highlight too
+});
 
 function wantsToFilm() {
   return safeGet("autoFilm") !== "0";
@@ -634,7 +663,10 @@ function syncFilming() {
   const playing = s.phase === "turn" || s.phase === "reveal";
   if (playing && iAmFilming() && !fullRec) startRecording();
   if (fullRec && !iAmFilming()) finishRecording(); // consent withdrawn: keep what was agreed to
-  if (s.phase === "over" && fullRec && !finishTimer) finishTimer = setTimeout(finishRecording, 4000); // catch the winner banner
+  if (s.phase === "over" && fullRec && !finishTimer) {
+    keepHighlight(4000);
+    finishTimer = setTimeout(finishRecording, 4000); // catch the winner banner
+  }
   if (matchRec) {
     if (localStream) matchRec.addAudio(localStream);
     if (remoteStream) matchRec.addAudio(remoteStream);
@@ -643,38 +675,49 @@ function syncFilming() {
 }
 
 function startRecording() {
-  if (savedVideo) URL.revokeObjectURL(savedVideo.url);
-  savedVideo = null;
+  for (const v of [savedVideo, savedHighlight]) if (v) URL.revokeObjectURL(v.url);
+  savedVideo = savedHighlight = null;
   matchRec = new MatchRecorder(recordingScene);
   if (localStream) matchRec.addAudio(localStream);
   if (remoteStream) matchRec.addAudio(remoteStream);
   matchRec.start();
   fullRec = matchRec.record();
+  hlRec = matchRec.record({ paused: true });
+  hlMs = 0;
+  hlUntil = 0;
+  keepHighlight(2000); // "Round one. Fight!"
+  hlTick = setInterval(updateHighlight, 150);
+  updateHighlight();
 }
 
 async function finishRecording() {
   clearTimeout(finishTimer);
   finishTimer = null;
   const rec = fullRec;
+  const hl = hlRec;
   const recorder = matchRec;
-  fullRec = null;
-  matchRec = null;
+  clearInterval(hlTick);
+  if (hl?.rec.state === "recording") hlMs += Date.now() - hlSince;
+  fullRec = hlRec = matchRec = null;
   if (!rec) return;
   renderSaves(true);
-  const blob = await rec.stop();
+  const [blob, hlBlob] = await Promise.all([rec.stop(), hl?.stop()]);
   recorder.dispose();
   if (blob.size > 0) savedVideo = { url: URL.createObjectURL(blob), ext: fileExtension(blob.type) };
+  if (hlBlob?.size > 0 && hlMs > 1000) {
+    savedHighlight = { url: URL.createObjectURL(hlBlob), ext: fileExtension(hlBlob.type), seconds: Math.round(hlMs / 1000) };
+  }
   renderSaves();
 }
 
 function discardRecording() {
   clearTimeout(finishTimer);
   finishTimer = null;
+  clearInterval(hlTick);
   matchRec?.dispose();
-  matchRec = null;
-  fullRec = null;
-  if (savedVideo) URL.revokeObjectURL(savedVideo.url);
-  savedVideo = null;
+  matchRec = fullRec = hlRec = null;
+  for (const v of [savedVideo, savedHighlight]) if (v) URL.revokeObjectURL(v.url);
+  savedVideo = savedHighlight = null;
 }
 
 function renderSaves(preparing = false) {
@@ -684,7 +727,11 @@ function renderSaves(preparing = false) {
   if (preparing || (state?.phase === "over" && fullRec)) {
     el.innerHTML = `<span class="hint small">🎬 Preparing your video…</span>`;
   } else if (savedVideo) {
-    el.innerHTML = `<a class="saveBtn" href="${savedVideo.url}" download="jjinja-battle-${stamp}.${savedVideo.ext}">🎬 Save match video</a>`;
+    const hl = savedHighlight
+      ? `<a class="saveBtn" href="${savedHighlight.url}" download="jjinja-highlight-${stamp}.${savedHighlight.ext}">✨ Save highlight (${savedHighlight.seconds}s)</a>`
+      : "";
+    const full = `<a class="saveBtn ${hl ? "alt" : ""}" href="${savedVideo.url}" download="jjinja-battle-${stamp}.${savedVideo.ext}">🎬 Full match</a>`;
+    el.innerHTML = `${hl}${full}<p class="hint small">Save before a rematch; the next match replaces these.</p>`;
   } else {
     el.innerHTML = "";
   }
@@ -868,6 +915,7 @@ function onMessage(m) {
     case "clip": {
       const url = m.audio ? `data:${m.mime || "audio/webm"};base64,${m.audio}` : null;
       if (url) clipUrls[m.from] = url;
+      keepHighlight(2400);
       announce(m.score.say ?? scoreLine(m.score));
       // you already heard it live over the video call; play it only if the call isn't connected
       if (url && m.from !== myId && pc?.connectionState !== "connected") new Audio(url).play().catch(() => {});

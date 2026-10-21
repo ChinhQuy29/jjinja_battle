@@ -441,3 +441,8 @@ body.arena .hudBottomLeft { bottom: 14px; left: 14px; margin: 0; font-size: 0.85
   font-weight: 800; text-decoration: none;
 }
 body.arena.clean .recBadge { opacity: 0.6; } /* stays visible in clean view: never hide that someone is recording */
+
+.saves { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.saves .hint { flex-basis: 100%; margin: 2px 0 0; }
+.saveBtn.alt { background: rgba(255, 255, 255, 0.18); }
+body:not(.arena) .saveBtn.alt { background: var(--track); color: var(--ink); }
