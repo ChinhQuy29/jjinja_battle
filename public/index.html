@@ -65,19 +65,6 @@
 
     <!-- room -->
     <section id="room" class="screen wide hidden">
-      <div class="roomHead">
-        <div>Room <b id="roomCode"></b></div>
-        <button id="btnCopy" class="small secondary">Copy invite link</button>
-      </div>
-      <p id="roomNotice" class="notice"></p>
-
-      <div class="status">
-        <p class="round" id="roundLabel"></p>
-        <div class="challenge" id="challengeLabel"></div>
-        <p class="turn" id="turnLabel"></p>
-        <div class="timer"><div id="timerBar"></div></div>
-      </div>
-
       <div class="stage">
         <div class="tile" id="tile0">
           <video playsinline autoplay></video>
@@ -93,30 +80,54 @@
         </div>
       </div>
 
-      <div id="camConsent" class="camConsent hidden">
+      <div class="timer"><div id="timerBar"></div></div>
+
+      <div class="hud hudTopLeft roomHead">
+        <div><span class="lbl">Room </span><b id="roomCode"></b></div>
+        <button id="btnCopy" class="small secondary" title="Copy invite link">🔗<span class="lbl"> Invite</span></button>
+      </div>
+
+      <div class="hud hudTopRight">
+        <button id="btnClean" class="small secondary" title="Hide the overlay for a clean view">👁</button>
+        <button id="btnFullscreen" class="small secondary" title="Full screen">⛶</button>
+        <button id="btnLeave" class="small secondary" title="Leave room">✕<span class="lbl"> Leave</span></button>
+      </div>
+
+      <div class="hud hudTop status">
+        <p class="round" id="roundLabel"></p>
+        <div class="challenge" id="challengeLabel"></div>
+        <p class="turn" id="turnLabel"></p>
+      </div>
+
+      <div class="hudCenter">
+        <div class="hudPanel" id="hudPanel">
+          <p id="roomNotice" class="notice"></p>
+
+          <div id="modePicker" class="modePicker hidden">
+            <button class="secondary" data-mode="classic">⚔️ Classic<small>random challenge each round</small></button>
+            <button class="secondary" data-mode="rally">🔁 Rally<small>each jjinja must beat the last</small></button>
+          </div>
+
+          <div id="lobbyPanel">
+            <p id="lobbyText"></p>
+            <button id="btnReady">I'm ready</button>
+          </div>
+
+          <div id="overPanel" class="hidden">
+            <h2 id="overTitle"></h2>
+            <div id="overTable"></div>
+            <div id="overFaces"></div>
+            <button id="btnRematch">Rematch</button>
+          </div>
+
+          <p id="mediaError" class="error"></p>
+        </div>
+      </div>
+
+      <div id="camConsent" class="hud hudBottom camConsent hidden">
         <p id="camText"></p>
         <button id="btnCam" class="small"></button>
       </div>
-
-      <div id="modePicker" class="modePicker hidden">
-        <button class="secondary" data-mode="classic">⚔️ Classic<small>random challenge each round</small></button>
-        <button class="secondary" data-mode="rally">🔁 Rally<small>each jjinja must beat the last</small></button>
-      </div>
-
-      <div id="lobbyPanel">
-        <p id="lobbyText"></p>
-        <button id="btnReady">I'm ready</button>
-      </div>
-
-      <div id="overPanel" class="hidden">
-        <h2 id="overTitle"></h2>
-        <div id="overTable"></div>
-        <div id="overFaces"></div>
-        <button id="btnRematch">Rematch</button>
-      </div>
-
-      <p id="mediaError" class="error"></p>
-      <button id="btnLeave" class="secondary">Leave room</button>
     </section>
 
     <p id="conn" class="conn"></p>

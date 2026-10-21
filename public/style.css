@@ -310,3 +310,120 @@ dialog a, .legal a { color: var(--accent-2); }
 .doc li { margin: 4px 0; }
 
 #btnBot.pulse { animation: pulse 0.8s ease-in-out infinite alternate; }
+
+/* ---------- full-screen arena (the room during matches) ---------- */
+
+body.arena { overflow: hidden; background: #08050f; }
+body.arena #app { max-width: none; padding: 0; }
+body.arena header h1, body.arena header .tag, body.arena .legal { display: none; }
+body.arena header { position: fixed; top: 12px; right: 12px; z-index: 40; margin: 0; }
+body.arena .mute { position: static; background: rgba(12, 6, 24, 0.45); color: #fff; backdrop-filter: blur(4px); }
+body.arena .conn { position: fixed; bottom: 64px; left: 0; right: 0; z-index: 40; color: #fff; text-shadow: 0 1px 3px #000; }
+
+body.arena #room {
+  position: fixed; inset: 0; z-index: 10;
+  padding: 0; border: 0; border-radius: 0;
+  background: #08050f; color: #fff; overflow: hidden;
+}
+body.arena .stage {
+  position: absolute; inset: 0; margin: 0; gap: 2px;
+  grid-template-columns: 1fr 1fr; grid-template-rows: 1fr;
+  background: #000;
+}
+/* phone held upright: stack the players top and bottom */
+@media (orientation: portrait) {
+  body.arena .stage { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+}
+body.arena .tile { aspect-ratio: auto; border: 0; border-radius: 0; height: 100%; min-height: 0; }
+body.arena .tile.empty { border: 0; background: #120c1c; }
+body.arena .tile.me, body.arena .tile.active { box-shadow: none; }
+body.arena .tile::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 0 transparent; transition: box-shadow 0.2s;
+}
+body.arena .tile.active::after { box-shadow: inset 0 0 0 5px var(--accent); }
+body.arena .tileHead { padding: 56px 14px 10px; font-size: 0.95rem; background: linear-gradient(rgba(0, 0, 0, 0.45), transparent); }
+body.arena .overlay { inset: 96px 14px 14px; }
+body.arena .noCam { font-size: 5rem; }
+
+/* see-through "glass" for everything floating over the cameras */
+body.arena .card, body.arena .badge, body.arena .hud, body.arena .hudPanel {
+  background: rgba(12, 6, 24, 0.32);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+body.arena .card { max-width: 340px; }
+body.arena .badge.good { background: rgba(25, 180, 107, 0.6); }
+body.arena .badge.rec { background: rgba(227, 38, 60, 0.7); }
+body.arena .badge.win { background: linear-gradient(135deg, rgba(245, 179, 1, 0.75), rgba(255, 61, 127, 0.75)); }
+body.arena .tile.empty .badge { color: #fff; }
+
+body.arena .hud { position: absolute; z-index: 20; border-radius: 14px; padding: 8px 12px; }
+body.arena .hudTopLeft { top: 12px; left: 12px; display: flex; align-items: center; gap: 10px; margin: 0; }
+body.arena .hudTopRight { top: 12px; right: 64px; display: flex; gap: 6px; padding: 4px; }
+body.arena .hudTop {
+  top: 12px; left: 50%; transform: translateX(-50%);
+  min-height: 0; max-width: min(520px, calc(100% - 24px)); text-align: center;
+}
+body.arena .hudTop:has(#roundLabel:empty) { display: none; }
+body.arena .hudBottom { bottom: 14px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); margin: 0; }
+body.arena .timer { position: absolute; top: 0; left: 0; right: 0; height: 5px; margin: 0; border-radius: 0; z-index: 25; background: rgba(255, 255, 255, 0.15); }
+
+body.arena .hud button.secondary, body.arena .hudPanel button.secondary { background: rgba(255, 255, 255, 0.16); color: #fff; }
+body.arena .challenge { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.18); margin: 4px auto 0; }
+body.arena .challenge small, body.arena .modePicker button small, body.arena td small { color: rgba(255, 255, 255, 0.75); }
+body.arena .turn { margin: 4px 0 0; }
+
+body.arena .hudCenter {
+  position: absolute; inset: 0; z-index: 15;
+  display: grid; place-items: center; pointer-events: none;
+}
+body.arena .hudPanel {
+  pointer-events: auto;
+  width: min(520px, calc(100% - 24px)); max-height: calc(100% - 140px); overflow: auto;
+  border-radius: 20px; padding: 16px 18px; text-align: center;
+}
+body.arena .hudPanel .notice { color: #ffd166; }
+body.arena .hudPanel .notice:empty, body.arena .hudPanel .error:empty { display: none; }
+body.arena table { margin: 6px 0 10px; }
+body.arena th, body.arena td { padding: 5px; border-bottom-color: rgba(255, 255, 255, 0.18); }
+body.arena td.won { color: #6dffb0; }
+body.arena #overFaces h3 { margin: 4px 0 8px; font-size: 1rem; }
+body.arena .faces { grid-template-columns: repeat(auto-fit, minmax(90px, 130px)); gap: 12px; margin-bottom: 10px; }
+body.arena .polaroid { padding: 6px 6px 8px; font-size: 0.8rem; text-shadow: none; }
+
+/* 👁 clean view: hide everything over the cameras except the control buttons */
+body.arena.clean .hudCenter, body.arena.clean .hudTop, body.arena.clean .hudTopLeft, body.arena.clean .hudBottom,
+body.arena.clean .tileHead, body.arena.clean .tile .overlay, body.arena.clean .timer { display: none; }
+body.arena.clean .hudTopRight { opacity: 0.55; }
+
+@media (max-width: 600px) {
+  body.arena .hudTopLeft { font-size: 0.8rem; padding: 4px 8px; }
+  body.arena .hudTopLeft button { padding: 4px 8px; font-size: 0.75rem; }
+  body.arena .hudTop { top: 52px; padding: 6px 10px; font-size: 0.85rem; }
+  body.arena .challenge .cEmoji { font-size: 1.4rem; }
+  body.arena .tileHead { padding-top: 10px; }
+  body.arena .overlay { inset: 40px 10px 10px; }
+}
+@media (orientation: portrait) {
+  body.arena .tile:first-child .tileHead { padding-top: 110px; }
+  body.arena .tile:first-child .overlay { top: 140px; }
+}
+body.arena #btnLeave { margin: 0; }
+/* the right-hand player's name hugs the right edge so the center banner never covers it */
+@media (orientation: landscape) {
+  body.arena .tile:nth-child(2) .tileHead { flex-direction: row-reverse; text-align: right; }
+  body.arena .tile:nth-child(2) .reportBtn { margin-left: 0; margin-right: auto; }
+}
+body.arena .hudPanel { display: flex; flex-direction: column; }
+body.arena .hudPanel.hidden { display: none !important; }
+body.arena #overPanel { order: 1; }
+body.arena #modePicker { order: 2; margin: 10px 0 0; }
+body.arena #mediaError { order: 3; }
+
+@media (max-width: 600px) {
+  body.arena .lbl { display: none; } /* icon-only controls so the top row fits on phones */
+}

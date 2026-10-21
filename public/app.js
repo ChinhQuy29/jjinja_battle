@@ -48,6 +48,12 @@ function myName() {
 
 function show(id) {
   for (const s of document.querySelectorAll(".screen")) s.classList.toggle("hidden", s.id !== id);
+  // the room is a full-screen arena: cameras edge to edge, everything else floats on top
+  document.body.classList.toggle("arena", id === "room");
+  if (id !== "room") {
+    document.body.classList.remove("clean");
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }
 }
 
 // ---------- camera + microphone ----------
@@ -531,6 +537,10 @@ function renderRoom() {
     renderFaces(s);
   }
 
+  // the center panel only shows when it has something to say
+  const panelBusy = s.phase === "lobby" || s.phase === "over" || !!s.notice || !!$("mediaError").textContent;
+  $("hudPanel").classList.toggle("hidden", !panelBusy);
+
   renderCamConsent();
   applyVideoConsent();
   renderTiles();
@@ -806,15 +816,28 @@ $("btnLeave").onclick = () => {
   history.replaceState(null, "", "/");
   show("home");
 };
+$("btnClean").onclick = () => {
+  document.body.classList.toggle("clean");
+  $("btnClean").textContent = document.body.classList.contains("clean") ? "👁‍🗨" : "👁";
+};
+if (document.fullscreenEnabled) {
+  $("btnFullscreen").onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else document.documentElement.requestFullscreen().catch(() => {});
+  };
+} else {
+  $("btnFullscreen").hidden = true; // e.g. iPhone Safari
+}
+
 $("btnCopy").onclick = async () => {
   const link = `${location.origin}/r/${state?.code}`;
   try {
     await navigator.clipboard.writeText(link);
-    $("btnCopy").textContent = "Copied!";
+    $("btnCopy").innerHTML = "✓<span class=\"lbl\"> Copied</span>";
   } catch {
     prompt("Copy this link:", link);
   }
-  setTimeout(() => ($("btnCopy").textContent = "Copy invite link"), 1500);
+  setTimeout(() => ($("btnCopy").innerHTML = "🔗<span class=\"lbl\"> Invite</span>"), 1500);
 };
 
 // invite links: /r/CODE prefills the join box
